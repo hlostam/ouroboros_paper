@@ -174,6 +174,7 @@ class Hdf5Creator:
         else:
             self.create_hdf5()
 
+
 class Hdf5Features:
     DF_STR = 'df'
     CONFIG_STR = 'config'
@@ -204,7 +205,7 @@ class Hdf5Features:
          :type config: Config
         """
         type = self.problem_definition.problem_definition_type
-        if (type == ProblemDefinition.MODPRES_DAY):
+        if type == ProblemDefinition.MODPRES_DAY:
             alias = self.problem_definition.get_assessment_type_str(config.assessment_name, config.days_to_cutoff)
         else:
             alias = self.problem_definition.get_modpres_day_str(str(config.current_date_test))
@@ -253,9 +254,13 @@ class Hdf5Features:
 
 
 class FeatureExtractionOulad(FeatureExtraction):
+
+    def prepare_student_data(self, source_type):
+        pass
+
     data_directory = "data"
 
-    def __init__(self, problem_definition, hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH)):
+    def __init__(self, problem_definition:ProblemDefinition, hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH)):
         super().__init__(problem_definition)
         self.hdf5_path = hdf5_path
         self.data_hdf5_manager = Hdf5Features(problem_definition)
@@ -308,6 +313,7 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         return df
 
+
     def __filter_submitted_until_date(self, date, df_students=None, dfs=None):
         self.logger.debug("Filtering students that submitted until the date: %s", date)
         if df_students is None:
@@ -316,6 +322,16 @@ class FeatureExtractionOulad(FeatureExtraction):
         arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
+
+    def __get_submitted_and_remap(self, date, df_students=None, dfs=None):
+        self.logger.debug("Getting already submitted students until the date: %s", date)
+        if df_students is None:
+            df_students = dfs[DS_STUD_INFO]
+        df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
+        arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
+        df_submitted = df_students.loc[df_students['id_student'].isin(arr_submitted)]
+        dfs[DS_STUD_VLE]
+
 
     def __retrieve_registered_by_date(self, registration_date, df_students=None, dfs=None):
         """
@@ -338,13 +354,17 @@ class FeatureExtractionOulad(FeatureExtraction):
     def __load_config_and_datasets(self):
         self.logger.debug("Checking hdf5 file:%s", self.hdf5_path)
         self.check_hdf5(reload=False)
-        self.__config = self._load_config_lazy()
+        self.__config = self._load_config_lazy(force_reload=True)
         self.logger.debug("Preparing data frames - filtering by mod-pres %s/%s", self.module, self.presentation)
         self.prepare_df_by_modpres()
         self.data_hdf5_manager.store_config(self.__config)
 
-    def _load_config_lazy(self):
+    def _load_config_lazy(self, force_reload=False):
         self.logger.debug("Trying to load config from HDF")
+        if force_reload:
+            self.logger.debug("Forcing reload of config")
+            return self.__load_config()
+
         c = self.data_hdf5_manager.load_config()
         if c is not None:
             self.logger.debug("Config loaded from HDF5 features file.")
@@ -377,6 +397,8 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         # id_assessment = assessment_row['id_assessment']
         assessment_name = assessment_row_train['assessment_name']
+        days_to_predict = self.problem_definition.days_to_predict
+        days_for_label_window = self.problem_definition.days_for_label_window
 
         config.cutoff_date_train = assessment_row_train['date']
         config.cutoff_date_test = assessment_row_test['date']
@@ -386,13 +408,13 @@ class FeatureExtractionOulad(FeatureExtraction):
         config.id_assessment_train = assessment_row_train['id_assessment']
         config.id_assessment_test = assessment_row_test['id_assessment']
         config.assessment_name = assessment_name
-        config.test_labels_to = config.cutoff_date_test
+        config.test_labels_to = config.cutoff_date_test - days_to_cutoff + days_to_predict
         config.test_labels_from = config.test_labels_to - days_to_cutoff
 
         training_type = self.problem_definition.training_type
         if training_type == TrainingType.SELFLEARNER:
             config.train_labels_to = config.test_labels_from - 1
-            config.train_labels_from = config.train_labels_to - days_to_cutoff
+            config.train_labels_from = config.train_labels_to - days_for_label_window
         elif training_type == TrainingType.PREVIOUS_PRES:
             config.train_labels_to = config.test_labels_to
             config.train_labels_from = config.test_labels_from
@@ -401,7 +423,7 @@ class FeatureExtractionOulad(FeatureExtraction):
             config.train_labels_from = config.test_labels_from
 
         self.logger.debug("Config loaded")
-        logging.info("%s",vars(config))
+        logging.info("%s", vars(config))
         return config
 
     def extract_features(self, features):

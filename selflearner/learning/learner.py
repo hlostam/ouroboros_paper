@@ -199,7 +199,7 @@ class Learner:
             fs, pr, rec, cm = self.get_metrics_for_thr(y_prob, y_actual, t)
             if fs > max_fscore:
                 max_fscore, max_thr, max_prec, max_recall = fs, t, pr, rec
-                max_conf_matrix = cm 
+                max_conf_matrix = cm
 
         return max_thr, max_fscore, max_prec, max_recall, max_conf_matrix
 
@@ -221,7 +221,7 @@ class Learner:
 
         # Sampling
         self.handle_sampling()
-       
+
         for clf, clf_name in self.classifiers:
             logging.debug("Training " + clf_name)
             pr_auc_list[clf_name] = []
@@ -237,16 +237,29 @@ class Learner:
                 x_train = self.x_train[self.y_train < 1]
                 clf.fit(x_train)
             else:
-                clf.fit(self.x_train, self.y_train)
+                try:
+                    clf.fit(self.x_train, self.y_train)
+                except ValueError:
+                    print("Classifier hasn't been trained, only negative class was provided.")
+                    clf = DummyClassifier(strategy="constant", constant=1)
+                    clf.fit(self.x_train, self.y_train)
 
+            is_p_ok = False
             if hasattr(clf, 'predict_proba'):
                 p = clf.predict_proba(self.x_test)
-                self.all_p[:, current_index] = p[:, 1]
+                try:
+                    y_prob = p[:, 1]
+                    is_p_ok = True
+                except IndexError:
+                    print("no positive class in predicted data")
+                    is_p_ok = False
+
+            if is_p_ok:
+                self.all_p[:, current_index] = y_prob
                 current_index += 1
 
-                prec, rec, thresh = precision_recall_curve(self.y_test, p[:, 1])
+                prec, rec, thresh = precision_recall_curve(self.y_test, y_prob)
                 pr_auc_list[clf_name].append((rec, prec))
-                y_prob = p[:, 1]
 
                 # reset for the Base classifiers / don't allow spurious results
                 pred = clf.predict(self.x_test)
@@ -261,15 +274,18 @@ class Learner:
                 y_actual_for_opt = self.y_train
                 if self.optimise_threshold is True:
                     if not clf_name.startswith('Base['):
-                        max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(y_proba_for_opt,
-                                                                                                              y_actual_for_opt,
-                                                                                                              thresh)
-                        max_fscore, max_prec, max_recall, max_conf_matrix = self.get_metrics_for_thr(y_prob, self.y_test, max_thr)
+                        max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(
+                            y_proba_for_opt,
+                            y_actual_for_opt,
+                            thresh)
+                        max_fscore, max_prec, max_recall, max_conf_matrix = self.get_metrics_for_thr(y_prob,
+                                                                                                     self.y_test,
+                                                                                                     max_thr)
                         logging.debug("Max Thr: {} F1:{}".format(max_thr, max_fscore))
 
                 top_k = 5
                 for k in self.topkpreclist:
-                    logging.debug('Appending: {}'.format(str(k)) )
+                    logging.debug('Appending: {}'.format(str(k)))
                     top_k_prec = top_k_precision(self.y_test, y_prob, k)
                     self.top_k_prec[k].append(top_k_prec)
                     top_k_rec = top_k_recall(self.y_test, y_prob, k)
@@ -288,11 +304,11 @@ class Learner:
 
                 fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
                 logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
-                logging.debug("AUC-PR:"+ str(pr_auc))
-                logging.debug("Precision:"+ str(max_prec))
+                logging.debug("AUC-PR:" + str(pr_auc))
+                logging.debug("Precision:" + str(max_prec))
                 logging.debug("Precision-TOP5:" + str(self.top_k_prec[top_k]))
                 logging.debug("Recall-TOP5:" + str(self.top_k_rec[top_k]))
-                logging.debug("Recall:"+ str(max_recall))
+                logging.debug("Recall:" + str(max_recall))
                 # logging.debug("Conf. matrix:\n" + str(max_conf_matrix))
                 self.auc.append(metrics.auc(fpr, tpr))
             else:
@@ -312,7 +328,7 @@ class Learner:
                 print(clf.best_params_)
                 print("Grid scores on development set:")
                 for params, mean_score, scores in clf.grid_scores_:
-                    print("%0.3f (+/-%0.03f) for %r"% (mean_score, scores.std() * 2, params))
+                    print("%0.3f (+/-%0.03f) for %r" % (mean_score, scores.std() * 2, params))
 
             self.handle_model_features(clf, clf_name)
             # file_prefix =  '_'.join([self.problem_definition.module, self.problem_definition.presentation, self.problem_definition.days_to_cutoff])
@@ -331,7 +347,6 @@ class Learner:
                 self.features[name] = clf.feature_importances_
         except ValueError:
             pass
-
 
     def train_all(self):
         """
