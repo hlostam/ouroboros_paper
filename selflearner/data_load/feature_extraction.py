@@ -8,7 +8,7 @@ from selflearner.problem_definition import ProblemDefinition
 
 
 class FeatureExtraction:
-    def __init__(self, problem_definition: ProblemDefinition):
+    def __init__(self, problem_definition: ProblemDefinition, include_submitted=False):
         self.problem_definition = problem_definition
         self.module = problem_definition.module
         self.presentation = problem_definition.presentation
@@ -22,6 +22,7 @@ class FeatureExtraction:
         self.features_days = problem_definition.features_days
         self._init_data()
         self.is_data_initialised = False
+        self.include_submitted = include_submitted
 
     def _init_data(self):
         self.data = dict()

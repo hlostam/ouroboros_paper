@@ -119,8 +119,8 @@ class Hdf5Creator:
             successfully_read = self.read_csv_and_store_to_hdf5(csv_path, ds, successfully_read)
         if successfully_read != len(DS_ARRAY):
             self.logger.error(
-                    "Successfully read = " + str(successfully_read) + " <> number of expected files " + str(
-                            len(DS_ARRAY)))
+                "Successfully read = " + str(successfully_read) + " <> number of expected files " + str(
+                    len(DS_ARRAY)))
         self.logger.debug("Read: %s", str(successfully_read))
 
     def read_csv_and_store_to_hdf5(self, csv_path, ds, successfully_read):
@@ -164,7 +164,7 @@ class Hdf5Creator:
     def get_hdf5_manager(self):
         self.check_hdf5()
         return self.hdf5_manager
-        
+
     def check_hdf5(self, reload=False):
         if reload:
             self.create_hdf5()
@@ -254,14 +254,15 @@ class Hdf5Features:
 
 
 class FeatureExtractionOulad(FeatureExtraction):
-
     def prepare_student_data(self, source_type):
         pass
 
     data_directory = "data"
 
-    def __init__(self, problem_definition:ProblemDefinition, hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH)):
-        super().__init__(problem_definition)
+    def __init__(self, problem_definition: ProblemDefinition,
+                 hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH),
+                 include_submitted=False):
+        super().__init__(problem_definition, include_submitted=include_submitted)
         self.hdf5_path = hdf5_path
         self.data_hdf5_manager = Hdf5Features(problem_definition)
         self.store_manager = PytablesHdf5Manager(hdf5_path)
@@ -313,25 +314,29 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         return df
 
-
     def __filter_submitted_until_date(self, date, df_students=None, dfs=None):
         self.logger.debug("Filtering students that submitted until the date: %s", date)
         if df_students is None:
             df_students = dfs[DS_STUD_INFO]
+
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
+
         arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
 
-    def __get_submitted_and_remap(self, date, df_students=None, dfs=None):
+    def __get_submitted_and_remap(self, date, dfs=None):
         self.logger.debug("Getting already submitted students until the date: %s", date)
-        if df_students is None:
-            df_students = dfs[DS_STUD_INFO]
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
-        arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
-        df_submitted = df_students.loc[df_students['id_student'].isin(arr_submitted)]
-        dfs[DS_STUD_VLE]
+        df_sa_submitted = df_stud_ass[df_stud_ass.date_submitted <= date]
+        arr_submitted = df_sa_submitted['id_student']
+        df_vle = dfs[DS_STUD_VLE]
 
+        dfx = df_vle[df_vle.id_student.isin(arr_submitted)].reset_index().merge(df_sa_submitted, on='id_student')
+        dfx['date_back'] = dfx.date_submitted - dfx.date
+        dfx = dfx.set_index(['code_module', 'code_presentation'])
+        dfx = dfx[['id_student', 'id_site', 'date', 'date_back', 'sum_click']]
+        return dfx
 
     def __retrieve_registered_by_date(self, registration_date, df_students=None, dfs=None):
         """
@@ -437,9 +442,10 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         # Filter by assessment submission
         df_filtered_students_test = self.__filter_submitted_until_date(self.__config.test_labels_from - 1,
-                                                                       df_filtered_students_test, dfs=self.dfs_train)
+                                                                       df_filtered_students_test, dfs=self.dfs_test)
+
         df_filtered_students_train = self.__filter_submitted_until_date(self.__config.train_labels_from - 1,
-                                                                        df_filtered_students_train, dfs=self.dfs_test)
+                                                                        df_filtered_students_train, dfs=self.dfs_train)
 
         self.logger.debug("Train: %s", str(len(df_filtered_students_train)))
         self.logger.debug("Test: %s", str(len(df_filtered_students_test)))
@@ -447,6 +453,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         # 1. Labels
         df_train_labels = self.__retrieve_labels_submitted(df_filtered_students_train, self.__config.train_labels_to)
         df_test_labels = self.__retrieve_labels_submitted(df_filtered_students_test, self.__config.test_labels_to)
+
         self.data_hdf5_manager.store_df('train/y', df_train_labels)
         self.data_hdf5_manager.store_df('test/y', df_test_labels)
 
@@ -466,19 +473,43 @@ class FeatureExtractionOulad(FeatureExtraction):
         max_day = 50
 
         # df_vle = self.dfs[DS_VLE]
-        df_stud_vle_train = self.dfs_train[DS_STUD_VLE]
-        df_stud_vle_test = self.dfs_test[DS_STUD_VLE]
+        df_stud_vle_train = self.dfs_train[DS_STUD_VLE].copy()
+        df_stud_vle_test = self.dfs_test[DS_STUD_VLE].copy()
+
+        df_stud_vle_train['date_back'] = features_train_to_date - df_stud_vle_train['date'] + 1
+        df_stud_vle_test['date_back'] =  features_test_to_date - df_stud_vle_test['date'] + 1
+
+        if self.include_submitted:
+            print("including submitted")
+            df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.test_labels_from - 1,
+                                                                    dfs=self.dfs_train)
+            print("Len submitted: {} before: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
+            df_stud_vle_train = df_stud_vle_train.append(df_vle_submitted_train)
+            print("Len submitted: {} after: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
+            df_train_labels = self.__retrieve_labels_submitted(self.retrieve_filtered_students(self.dfs_train),
+                                                               self.__config.train_labels_to)
+            self.data_hdf5_manager.store_df('train/y', df_train_labels)
+            df_demog_train = self.__load_demog(df_train_labels[['id_student']], self.dfs_train)
+            self.data_hdf5_manager.store_df('train/x_demog', df_demog_train)
+            df_filtered_students_train = df_train_labels[['id_student']].drop_duplicates()
+
+        print("Train2: {}".format(str(len(df_filtered_students_train))))
 
         df_stud_vle_date_filter_train = df_stud_vle_train.loc[
-            (df_stud_vle_train.date >= features_train_from_date) & (df_stud_vle_train.date <= features_train_to_date)].copy()
+            (df_stud_vle_train.date >= features_train_from_date) & (
+                df_stud_vle_train.date <= features_train_to_date)]
         df_stud_vle_date_filter_test = df_stud_vle_test.loc[
-            (df_stud_vle_test.date >= features_test_from_date) & (df_stud_vle_test.date <= features_test_to_date)].copy()
-        df_stud_vle_date_filter_train['date_back'] = features_train_to_date - df_stud_vle_date_filter_train['date'] + 1
+            (df_stud_vle_test.date >= features_test_from_date) & (
+                df_stud_vle_test.date <= features_test_to_date)]
+        # df_stud_vle_date_filter_train['date_back'] = features_train_to_date - df_stud_vle_date_filter_train['date'] + 1
         df_stud_vle_date_filter_train = df_stud_vle_date_filter_train.loc[
             df_stud_vle_date_filter_train['date_back'] <= max_day]
-        df_stud_vle_date_filter_test['date_back'] = features_test_to_date - df_stud_vle_date_filter_test['date'] + 1
+        # df_stud_vle_date_filter_test['date_back'] = features_test_to_date - df_stud_vle_date_filter_test['date'] + 1
         df_stud_vle_date_filter_test = df_stud_vle_date_filter_test.loc[
             df_stud_vle_date_filter_test['date_back'] <= max_day]
+
+
+
 
         # 3. VLE - totals sums
         df_day_train = self.__extract_day_sums(df_stud_vle_date_filter_train, df_filtered_students_train)
@@ -526,7 +557,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_vle_statistics_before_train = self.__extract_vle_statistics_before_start(df_stud_vle_date_filter_train,
                                                                                     df_filtered_students_train)
         df_vle_statistics_before_test = self.__extract_vle_statistics_before_start(df_stud_vle_date_filter_test,
-                                                                                    df_filtered_students_test)
+                                                                                   df_filtered_students_test)
         self.data_hdf5_manager.store_df('train/x_vle_statistics_beforestart', df_vle_statistics_before_train)
         self.data_hdf5_manager.store_df('test/x_vle_statistics_beforestart', df_vle_statistics_before_test)
 
@@ -556,14 +587,17 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         for feature in features:
             feature = '_'.join(['x', feature])
-            self.data["x_train"] = pd.merge(self.data["x_train"], self.data_hdf5_manager.load_df('/'.join(['train', feature])),
+            self.data["x_train"] = pd.merge(self.data["x_train"],
+                                            self.data_hdf5_manager.load_df('/'.join(['train', feature])),
+                                            on='id_student')
+            self.logger.debug("x train size: %s columns: %s", len(self.data["x_train"]),
+                              len(self.data["x_train"].columns))
+            self.data["x_test"] = pd.merge(self.data["x_test"],
+                                           self.data_hdf5_manager.load_df('/'.join(['test', feature])),
                                            on='id_student')
-            self.logger.debug("x train size: %s columns: %s", len(self.data["x_train"]), len(self.data["x_train"].columns))
-            self.data["x_test"] = pd.merge(self.data["x_test"], self.data_hdf5_manager.load_df('/'.join(['test', feature])),
-                                       on='id_student')
             self.logger.debug("x test size: %s columns: %s", len(self.data["x_test"]), len(self.data["x_test"].columns))
 
-        #  X + Y together
+        # X + Y together
         self.data["all_train"] = pd.merge(self.data["x_train"], self.data["y_train"], on='id_student')
         self.data["all_test"] = pd.merge(self.data["x_test"], self.data["y_test"], on='id_student')
 
@@ -594,7 +628,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_day_activity_type_grouped_merged.rename(columns=lambda x: '_'.join([str(a) for a in x]), inplace=True)
         df_day_activity_type_grouped_merged.reset_index(inplace=True)
         df_day_activity_type_grouped_merged.fillna(0, inplace=True)
-        logging.info("COLUMN COUNT:VLE DAY ACTIVITY TYPE SUM: %s",len(df_day_activity_type_grouped_merged.columns))
+        logging.info("COLUMN COUNT:VLE DAY ACTIVITY TYPE SUM: %s", len(df_day_activity_type_grouped_merged.columns))
         return df_day_activity_type_grouped_merged
 
     def __retrieve_labels_submitted(self, df_students, cutoff):
@@ -658,7 +692,8 @@ class FeatureExtractionOulad(FeatureExtraction):
         num_days_before_start = math.fabs(min_click_day - presentation_start_day)
 
         # before start of the presentation
-        df_stud_vle_date_filter_before_start = df_stud_vle_date_filter.loc[df_stud_vle_date_filter.date < presentation_start_day]
+        df_stud_vle_date_filter_before_start = df_stud_vle_date_filter.loc[
+            df_stud_vle_date_filter.date < presentation_start_day]
         df_date_sums = df_stud_vle_date_filter_before_start.groupby(['id_student', 'date'])[['sum_click']].agg(
             ['count', 'sum']).reset_index()
         df_date_sums.columns = ['id_student', 'date', 'count_materials', 'sum_click']
@@ -669,21 +704,22 @@ class FeatureExtractionOulad(FeatureExtraction):
              'sum_click': {'sum_click': 'sum', 'max_clicks': 'max', 'min_clicks': 'min', 'median_clicks': 'median',
                            'avg_clicks': 'mean'}})
         df_date_visit_stats_beforestart_active.columns = ['count_days_beforestart', 'sum_material_beforestart',
-                                                        'max_material_beforestart',
-                                                        'avg_material_count_beforestart_peractive',
-                                                        'median_material_count_beforestart_peractive',
-                                                        'min_material_count_beforestart_peractive',
-                                                        'median_clicks_beforestart_peractive',
-                                                        'avg_clicks_beforestart_peractive',
-                                                        'min_clicks_beforestart_peractive', 'sum_click_beforestart',
-                                                        'max_clicks_beforestart'
-                                                        ]
+                                                          'max_material_beforestart',
+                                                          'avg_material_count_beforestart_peractive',
+                                                          'median_material_count_beforestart_peractive',
+                                                          'min_material_count_beforestart_peractive',
+                                                          'median_clicks_beforestart_peractive',
+                                                          'avg_clicks_beforestart_peractive',
+                                                          'min_clicks_beforestart_peractive', 'sum_click_beforestart',
+                                                          'max_clicks_beforestart'
+                                                          ]
         df_date_visit_stats_beforestart_active['count_days_beforestart_rel'] = df_date_visit_stats_beforestart_active[
-                                                                               'count_days_beforestart'] / num_days_before_start
+                                                                                   'count_days_beforestart'] / num_days_before_start
 
-        df_date_visit_stats_beforestart_active = pd.merge(ds_students, df_date_visit_stats_beforestart_active, how='left',
-                                                        left_on='id_student',
-                                                        right_index=True)
+        df_date_visit_stats_beforestart_active = pd.merge(ds_students, df_date_visit_stats_beforestart_active,
+                                                          how='left',
+                                                          left_on='id_student',
+                                                          right_index=True)
         df_date_visit_stats_beforestart_active.fillna(0, inplace=True)
 
         # all days
@@ -725,8 +761,8 @@ class FeatureExtractionOulad(FeatureExtraction):
         self.logger.debug("Num days: %s", num_days_from_vleopen)
 
         df_last_login = df_stud_vle_date_filter.groupby(['id_student']).agg(
-                {'date': {'first_login': 'min', 'last_login': 'max'},
-                 'date_back': {'last_login_rel': 'min'}})
+            {'date': {'first_login': 'min', 'last_login': 'max'},
+             'date_back': {'last_login_rel': 'min'}})
         df_last_login.columns = df_last_login.columns.droplevel(0)
         df_last_login = pd.merge(ds_students, df_last_login, how='left', left_on='id_student',
                                  right_index=True)
@@ -737,10 +773,10 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         # From VLE open
         df_date_sums = df_stud_vle_date_filter.groupby(['id_student', 'date'])[['sum_click']].agg(
-                ['count', 'sum']).reset_index()
+            ['count', 'sum']).reset_index()
         df_date_sums.columns = ['id_student', 'date', 'count_materials', 'sum_click']
         df_date_visit_stats_fromvleopen = df_date_sums.groupby(['id_student']).agg(
-                {'count_materials': {'count_days': 'count', 'sum_material': 'sum'}, 'sum_click': {'sum_click': 'sum'}})
+            {'count_materials': {'count_days': 'count', 'sum_material': 'sum'}, 'sum_click': {'sum_click': 'sum'}})
         df_date_visit_stats_fromvleopen.columns = ['count_days_fromvleopen', 'sum_material_fromvleopen',
                                                    'sum_click_fromvleopen']
         df_date_visit_stats_fromvleopen['count_days_fromvleopen_rel'] = df_date_visit_stats_fromvleopen[
@@ -752,29 +788,35 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         ret_val = pd.merge(df_date_visit_stats_fromvleopen, df_last_login, on='id_student')
 
-
-
         if max_click_day >= presentation_start_day:
-            df_stud_vle_date_filter2 = df_stud_vle_date_filter.loc[df_stud_vle_date_filter.date >= presentation_start_day ]
+            df_stud_vle_date_filter2 = df_stud_vle_date_filter.loc[
+                df_stud_vle_date_filter.date >= presentation_start_day]
             df_date_sums = df_stud_vle_date_filter2.groupby(['id_student', 'date'])[['sum_click']].agg(
                 ['count', 'sum']).reset_index()
             df_date_sums.columns = ['id_student', 'date', 'count_materials', 'sum_click']
             df_date_visit_stats_fromstart_active = df_date_sums.groupby(['id_student']).agg(
-                {'count_materials': {'count_days': 'count', 'sum_material': 'sum', 'max_materials':'max', 'min_materials:':'min',
-                                     'median_materials':'median', 'avg_materials':'mean'},
-                 'sum_click': {'sum_click': 'sum', 'max_clicks':'max', 'min_clicks':'min', 'median_clicks':'median','avg_clicks':'mean'}})
-            df_date_visit_stats_fromstart_active.columns = ['count_days_fromstart', 'sum_material_fromstart', 'max_material_fromstart',
+                {'count_materials': {'count_days': 'count', 'sum_material': 'sum', 'max_materials': 'max',
+                                     'min_materials:': 'min',
+                                     'median_materials': 'median', 'avg_materials': 'mean'},
+                 'sum_click': {'sum_click': 'sum', 'max_clicks': 'max', 'min_clicks': 'min', 'median_clicks': 'median',
+                               'avg_clicks': 'mean'}})
+            df_date_visit_stats_fromstart_active.columns = ['count_days_fromstart', 'sum_material_fromstart',
+                                                            'max_material_fromstart',
                                                             'avg_material_count_fromstart_peractive',
-                                                            'median_material_count_fromstart_peractive','min_material_count_fromstart_peractive',
-                                                            'median_clicks_fromstart_peractive','avg_clicks_fromstart_peractive',
-                                                            'min_clicks_fromstart_peractive','sum_click_fromstart','max_clicks_fromstart'
+                                                            'median_material_count_fromstart_peractive',
+                                                            'min_material_count_fromstart_peractive',
+                                                            'median_clicks_fromstart_peractive',
+                                                            'avg_clicks_fromstart_peractive',
+                                                            'min_clicks_fromstart_peractive', 'sum_click_fromstart',
+                                                            'max_clicks_fromstart'
                                                             ]
             df_date_visit_stats_fromstart_active['count_days_fromstart_rel'] = df_date_visit_stats_fromstart_active[
                                                                                    'count_days_fromstart'] / num_days_from_start
 
-            df_date_visit_stats_fromstart_active = pd.merge(ds_students, df_date_visit_stats_fromstart_active, how='left',
-                                                       left_on='id_student',
-                                                       right_index=True)
+            df_date_visit_stats_fromstart_active = pd.merge(ds_students, df_date_visit_stats_fromstart_active,
+                                                            how='left',
+                                                            left_on='id_student',
+                                                            right_index=True)
             df_date_visit_stats_fromstart_active.fillna(0, inplace=True)
 
             # all days
@@ -782,43 +824,48 @@ class FeatureExtractionOulad(FeatureExtraction):
             df_date_sums = df_date_sums.unstack().fillna(0).stack()
             df_date_sums.reset_index(inplace=True)
             df_date_visit_stats_fromstart = df_date_sums.groupby(['id_student']).agg(
-                    {'count_materials': {'min_materials:':'min',
-                                         'median_materials':'median', 'avg_materials':'mean'},
-                     'sum_click': {'min_clicks':'min', 'median_clicks':'median','avg_clicks':'mean'}})
+                {'count_materials': {'min_materials:': 'min',
+                                     'median_materials': 'median', 'avg_materials': 'mean'},
+                 'sum_click': {'min_clicks': 'min', 'median_clicks': 'median', 'avg_clicks': 'mean'}})
             df_date_visit_stats_fromstart.columns = [
-                                                     'avg_material_count_fromstart',
-                                                     'median_material_count_fromstart','min_material_count_fromstart',
-                                                     'median_clicks_fromstart','avg_clicks_fromstart',
-                                                     'min_clicks_fromstart'
-                                                    ]
+                'avg_material_count_fromstart',
+                'median_material_count_fromstart', 'min_material_count_fromstart',
+                'median_clicks_fromstart', 'avg_clicks_fromstart',
+                'min_clicks_fromstart'
+            ]
 
             df_date_visit_stats_fromstart = pd.merge(ds_students, df_date_visit_stats_fromstart, how='left',
-                                                            left_on='id_student',
-                                                            right_index=True)
+                                                     left_on='id_student',
+                                                     right_index=True)
             df_date_visit_stats_fromstart.fillna(0, inplace=True)
 
             # join
-            ret_val = pd.merge(ret_val, df_date_visit_stats_fromstart_active, left_on='id_student', right_on='id_student')
+            ret_val = pd.merge(ret_val, df_date_visit_stats_fromstart_active, left_on='id_student',
+                               right_on='id_student')
             ret_val = pd.merge(ret_val, df_date_visit_stats_fromstart, left_on='id_student', right_on='id_student')
 
         # Consecutive days
-        df_stud_date = df_stud_vle_date_filter.groupby(['id_student', 'date_back'])[['sum_click']].count().reset_index()[['id_student','date_back']]
-        df_consecutive_days = df_stud_date.groupby(['id_student']).agg({'date_back': {'consecutive_days': FeaturesMapping.consecut}})
+        df_stud_date = \
+            df_stud_vle_date_filter.groupby(['id_student', 'date_back'])[['sum_click']].count().reset_index()[
+                ['id_student', 'date_back']]
+        df_consecutive_days = df_stud_date.groupby(['id_student']).agg(
+            {'date_back': {'consecutive_days': FeaturesMapping.consecut}})
         df_consecutive_days.columns = ['consecutive_days']
         ret_val = pd.merge(ret_val, df_consecutive_days, left_on='id_student', how='left', right_index=True)
         ret_val.fillna(0, inplace=0)
 
         self.logger.debug("1st: %s, 2nd: %s, 3rd: %s", len(df_last_login), len(df_date_visit_stats_fromvleopen),
-                      len(ret_val))
+                          len(ret_val))
         logging.info("COLUMN COUNT:VLE STATISTICS: %s", len(ret_val.columns))
         return ret_val
 
     def __extract_reg_stats(self, ds_students, dfs):
         df_reg = dfs[DS_STUD_REG].copy().reset_index()
-        df_reg_stats = df_reg[['id_student','date_registration']]
+        df_reg_stats = df_reg[['id_student', 'date_registration']]
         df_reg_stats = pd.merge(ds_students, df_reg_stats, on='id_student')
-        logging.info("COLUMN COUNT:REGISTRATION STATISTICS: %s",len(df_reg_stats.columns))
+        logging.info("COLUMN COUNT:REGISTRATION STATISTICS: %s", len(df_reg_stats.columns))
         return df_reg_stats
+
 
 # MAIN script
 

@@ -44,6 +44,7 @@ def map_k_toclassname(k):
 class MultiDayExperiment:
     def __init__(self, max_days=11, min_days=0, max_days_to_predict=None, count_all_days_to_predict=False,
                  days_for_label_window=None, count_all_days_for_label_window=False,
+                 include_submitted=False,
                  features=None, problem_defintions: [ProblemDefinition] = None,
                  module_presentations=None, assessment_name=None,
                  grouping_column='submit_in', id_column='id_student',
@@ -93,6 +94,7 @@ class MultiDayExperiment:
         if self.classifiers is not None:
             self.classifiers_names = [name for cl, name in self.classifiers]
         self.experiment_results = []
+        self.include_submitted = include_submitted
 
     def metric_to_df(self, metric):
         df = pd.DataFrame(self.metrics[metric])
@@ -111,12 +113,17 @@ class MultiDayExperiment:
         Performs the whole experiment, iterates over days and list of problem definitions.
         """
         for problem_def in self.problem_definitions:
+            logging.info(
+                "{} {}, Day: {} Predicted day: {} LabelWindow: {}".format(problem_def.module, problem_def.presentation,
+                                                                          problem_def.days_to_cutoff,
+                                                                          problem_def.days_to_predict,
+                                                                          problem_def.days_for_label_window))
             print("{} {}, Day: {} Predicted day: {} LabelWindow: {}".format(problem_def.module, problem_def.presentation,
                                                                             problem_def.days_to_cutoff,
                                                                             problem_def.days_to_predict,
                                                                             problem_def.days_for_label_window))
             problem_def = problem_def
-            fe = FeatureExtractionOulad(problem_def)
+            fe = FeatureExtractionOulad(problem_def, include_submitted=self.include_submitted)
 
             data = fe.extract_features(features=self.features)
             train_data = data["all_train"]
