@@ -231,7 +231,7 @@ class MultiDayExperiment:
             df_series.loc[:, 'train_NS_ratio'] = df_series['train_NS'] / (df_series['train_NS'] + df_series['train_S'])
             df_series.loc[:, 'train_S_ratio'] = df_series['train_S'] / (df_series['train_NS'] + df_series['train_S'])
             df_series = df_series[
-                ['code_module', 'code_presentation', 'day', 'days_to_predict', 'train_NS_ratio', 'test_NS_ratio',
+                ['code_module', 'code_presentation', 'day', 'days_to_predict', 'days_for_label_window', 'train_NS_ratio', 'test_NS_ratio',
                  'train_S_ratio', 'test_S_ratio']]
 
         return df_series

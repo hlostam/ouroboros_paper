@@ -322,6 +322,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
 
         arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
+        print("Removed:{}".format(len(arr_submitted)))
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
 
@@ -440,6 +441,8 @@ class FeatureExtractionOulad(FeatureExtraction):
                                                                        df_students=df_filtered_students_test,
                                                                        dfs=self.dfs_test)
 
+        print("Train: {}".format(str(len(df_filtered_students_train))))
+
         # Filter by assessment submission
         df_filtered_students_test = self.__filter_submitted_until_date(self.__config.test_labels_from - 1,
                                                                        df_filtered_students_test, dfs=self.dfs_test)
@@ -447,8 +450,8 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered_students_train = self.__filter_submitted_until_date(self.__config.train_labels_from - 1,
                                                                         df_filtered_students_train, dfs=self.dfs_train)
 
-        self.logger.debug("Train: %s", str(len(df_filtered_students_train)))
-        self.logger.debug("Test: %s", str(len(df_filtered_students_test)))
+        print("Train: {}".format(str(len(df_filtered_students_train))))
+        print("Test: {}".format(str(len(df_filtered_students_test))))
 
         # 1. Labels
         df_train_labels = self.__retrieve_labels_submitted(df_filtered_students_train, self.__config.train_labels_to)
@@ -477,17 +480,22 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_stud_vle_test = self.dfs_test[DS_STUD_VLE].copy()
 
         df_stud_vle_train['date_back'] = features_train_to_date - df_stud_vle_train['date'] + 1
-        df_stud_vle_test['date_back'] =  features_test_to_date - df_stud_vle_test['date'] + 1
+        df_stud_vle_test['date_back'] = features_test_to_date - df_stud_vle_test['date'] + 1
 
         if self.include_submitted:
             print("including submitted")
+            print("First deadline:{} second:{}".format(self.__config.test_labels_from - 1, self.__config.train_labels_to))
+
             df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.test_labels_from - 1,
                                                                     dfs=self.dfs_train)
             print("Len submitted: {} before: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
             df_stud_vle_train = df_stud_vle_train.append(df_vle_submitted_train)
             print("Len submitted: {} after: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
+            print("counts before:{}".format(df_train_labels.groupby('submitted').size()))
             df_train_labels = self.__retrieve_labels_submitted(self.retrieve_filtered_students(self.dfs_train),
                                                                self.__config.train_labels_to)
+            print("counts after:{}".format(df_train_labels.groupby('submitted').size()))
+
             self.data_hdf5_manager.store_df('train/y', df_train_labels)
             df_demog_train = self.__load_demog(df_train_labels[['id_student']], self.dfs_train)
             self.data_hdf5_manager.store_df('train/x_demog', df_demog_train)
@@ -637,7 +645,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         label_submitted = 'submitted'
         label_submit_in = 'submit_in'
         df_students.loc[:, label_submitted] = df_students.apply(
-            lambda row: 1 if row['date_submitted'] <= cutoff and row['date_submitted'] != -1 else 0, axis=1)
+            lambda row: 1 if row['date_submitted'] <= cutoff else 0, axis=1)
         df_students.loc[:, label_submit_in] = df_students.apply(
             lambda row: cutoff - row['date_submitted'] if row[label_submitted] == 1 else -1, axis=1)
         df_labels = df_students[['id_student', label_submitted, label_submit_in]]
