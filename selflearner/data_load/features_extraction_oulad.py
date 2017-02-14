@@ -252,8 +252,10 @@ class Hdf5Features:
         #     store[df_access_str] = df
         self.storage_manager.store_dataframe(df_access_str, df)
 
-
+SUBMIT_NEVER = -9999
 class FeatureExtractionOulad(FeatureExtraction):
+
+
     def prepare_student_data(self, source_type):
         pass
 
@@ -309,7 +311,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_ass_not_banked = df_ass.loc[df_ass['is_banked'] == 0]
         self.logger.debug("All students: %s Not banked: %s", str(len(df_ass)), str(len(df_ass_not_banked)))
         df = pd.merge(df_studinfo, df_ass_not_banked, how='left', on='id_student')
-        df.fillna(-1, inplace=True)
+        df.fillna(SUBMIT_NEVER, inplace=True)
         self.logger.debug("StudInfo Before merge: %s ... After merge: %s", str(len(df_studinfo)), str(len(df)))
 
         return df
@@ -326,10 +328,13 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
 
-    def __get_submitted_and_remap(self, date, dfs=None):
+    def __get_submitted_and_remap(self, date, dfs=None, min_date=None):
         self.logger.debug("Getting already submitted students until the date: %s", date)
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
         df_sa_submitted = df_stud_ass[df_stud_ass.date_submitted <= date]
+        if min_date is not None:
+            df_sa_submitted = df_sa_submitted[df_sa_submitted.date_submitted >= date]
+
         arr_submitted = df_sa_submitted['id_student']
         df_vle = dfs[DS_STUD_VLE]
 
@@ -460,6 +465,9 @@ class FeatureExtractionOulad(FeatureExtraction):
         self.data_hdf5_manager.store_df('train/y', df_train_labels)
         self.data_hdf5_manager.store_df('test/y', df_test_labels)
 
+        print("Counts TrainLabels:{}".format(df_train_labels.groupby('submitted').size()))
+        print("Counts TestLabels:{}".format(df_test_labels.groupby('submitted').size()))
+
         # 2. demographic
         df_demog_train = self.__load_demog(df_train_labels[['id_student']], self.dfs_train)
         df_demog_test = self.__load_demog(df_test_labels[['id_student']], self.dfs_test)
@@ -483,17 +491,22 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_stud_vle_test['date_back'] = features_test_to_date - df_stud_vle_test['date'] + 1
 
         if self.include_submitted:
+            min_date = 0
             print("including submitted")
             print("First deadline:{} second:{}".format(self.__config.test_labels_from - 1, self.__config.train_labels_to))
 
             df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.test_labels_from - 1,
-                                                                    dfs=self.dfs_train)
+                                                                    dfs=self.dfs_train, min_date=0)
             print("Len submitted: {} before: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
             df_stud_vle_train = df_stud_vle_train.append(df_vle_submitted_train)
             print("Len submitted: {} after: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
             print("counts before:{}".format(df_train_labels.groupby('submitted').size()))
-            df_train_labels = self.__retrieve_labels_submitted(self.retrieve_filtered_students(self.dfs_train),
-                                                               self.__config.train_labels_to)
+
+            df_filtered = self.__filter_submitted_until_date(min_date-1,
+                                                             df_students=self.retrieve_filtered_students(self.dfs_train),
+                                                             dfs=self.dfs_train)
+            df_train_labels = self.__retrieve_labels_submitted(df_filtered, self.__config.train_labels_to)
+
             print("counts after:{}".format(df_train_labels.groupby('submitted').size()))
 
             self.data_hdf5_manager.store_df('train/y', df_train_labels)
@@ -645,7 +658,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         label_submitted = 'submitted'
         label_submit_in = 'submit_in'
         df_students.loc[:, label_submitted] = df_students.apply(
-            lambda row: 1 if row['date_submitted'] <= cutoff else 0, axis=1)
+            lambda row: 1 if row['date_submitted'] <= cutoff and row['date_submitted'] != SUBMIT_NEVER else 0, axis=1)
         df_students.loc[:, label_submit_in] = df_students.apply(
             lambda row: cutoff - row['date_submitted'] if row[label_submitted] == 1 else -1, axis=1)
         df_labels = df_students[['id_student', label_submitted, label_submit_in]]
