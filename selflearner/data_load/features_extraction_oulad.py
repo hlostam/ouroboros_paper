@@ -175,6 +175,43 @@ class Hdf5Creator:
             self.create_hdf5()
 
 
+def flatten_hierarchical_cols(col, sep='_'):
+    """
+    Flattens the names of the hierarchical columns in the pandas data frame
+    :param col:
+    :param sep:
+    :return:
+    """
+    if not type(col) is tuple:
+        return col
+    else:
+        new_col = ''
+        for level_index, level in enumerate(col):
+            if not level == '':
+                if not level_index == 0:
+                    new_col += sep
+                new_col += str(level)
+        return new_col
+
+
+def day_to_week(day):
+    if day < 0:
+        return math.floor(day / 7)
+    else:
+        return math.ceil((day + 1) / 7)
+
+
+def weekday(day, offset=6):
+    return (day % 7) + 1
+
+
+def workday_weekend(weekday):
+    if weekday > 5:
+        return "WEEKEND"
+    else:
+        return "WORKDAY"
+
+
 class Hdf5Features:
     DF_STR = 'df'
     CONFIG_STR = 'config'
@@ -252,10 +289,11 @@ class Hdf5Features:
         #     store[df_access_str] = df
         self.storage_manager.store_dataframe(df_access_str, df)
 
+
 SUBMIT_NEVER = -9999
+
+
 class FeatureExtractionOulad(FeatureExtraction):
-
-
     def prepare_student_data(self, source_type):
         pass
 
@@ -493,17 +531,19 @@ class FeatureExtractionOulad(FeatureExtraction):
         if self.include_submitted:
             min_date = 0
             print("including submitted")
-            print("First deadline:{} second:{}".format(self.__config.test_labels_from - 1, self.__config.train_labels_to))
+            print(
+                "First deadline:{} second:{}".format(self.__config.test_labels_from - 1, self.__config.train_labels_to))
 
-            df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.test_labels_from - 1,
+            df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.train_labels_from - 1,
                                                                     dfs=self.dfs_train, min_date=0)
             print("Len submitted: {} before: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
             df_stud_vle_train = df_stud_vle_train.append(df_vle_submitted_train)
             print("Len submitted: {} after: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
-            print("counts before:{}".format(df_train_labels.groupby('submitted').size()))
+            print("counts before: {}".format(df_train_labels.groupby('submitted').size()))
 
-            df_filtered = self.__filter_submitted_until_date(min_date-1,
-                                                             df_students=self.retrieve_filtered_students(self.dfs_train),
+            df_filtered = self.__filter_submitted_until_date(min_date - 1,
+                                                             df_students=self.retrieve_filtered_students(
+                                                                 self.dfs_train),
                                                              dfs=self.dfs_train)
             df_train_labels = self.__retrieve_labels_submitted(df_filtered, self.__config.train_labels_to)
 
@@ -528,9 +568,6 @@ class FeatureExtractionOulad(FeatureExtraction):
         # df_stud_vle_date_filter_test['date_back'] = features_test_to_date - df_stud_vle_date_filter_test['date'] + 1
         df_stud_vle_date_filter_test = df_stud_vle_date_filter_test.loc[
             df_stud_vle_date_filter_test['date_back'] <= max_day]
-
-
-
 
         # 3. VLE - totals sums
         df_day_train = self.__extract_day_sums(df_stud_vle_date_filter_train, df_filtered_students_train)
