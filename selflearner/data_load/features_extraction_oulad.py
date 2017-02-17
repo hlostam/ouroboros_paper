@@ -301,8 +301,9 @@ class FeatureExtractionOulad(FeatureExtraction):
 
     def __init__(self, problem_definition: ProblemDefinition,
                  hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH),
-                 include_submitted=False):
-        super().__init__(problem_definition, include_submitted=include_submitted)
+                 include_submitted=False,
+                 submitted_append_min_date=0):
+        super().__init__(problem_definition, include_submitted=include_submitted, submitted_append_min_date=submitted_append_min_date)
         self.hdf5_path = hdf5_path
         self.data_hdf5_manager = Hdf5Features(problem_definition)
         self.store_manager = PytablesHdf5Manager(hdf5_path)
@@ -351,7 +352,6 @@ class FeatureExtractionOulad(FeatureExtraction):
         df = pd.merge(df_studinfo, df_ass_not_banked, how='left', on='id_student')
         df.fillna(SUBMIT_NEVER, inplace=True)
         self.logger.debug("StudInfo Before merge: %s ... After merge: %s", str(len(df_studinfo)), str(len(df)))
-
         return df
 
     def __filter_submitted_until_date(self, date, df_students=None, dfs=None):
@@ -366,10 +366,35 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
 
+    def __filter_unregistered_indate(self, date, df_students=None, dfs=None):
+        if df_students is None:
+            df_students = dfs[DS_STUD_INFO]
+        df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
+        arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
+
+        df_registered_now = dfs[DS_STUD_REG]
+        df_unregistered_now = df_registered_now[df_registered_now.date_unregistration > date]
+        print("unreg now:{}".format(len(df_unregistered_now)))
+        df_unreg_sub = df_unregistered_now[df_unregistered_now.id_student.isin(arr_submitted)]
+        print("unreg now and sub:{}".format(len(df_unreg_sub)))
+        print("Before removal of weird students:{}".format(str(len(df_students))))
+        df_filtered = df_students.loc[~df_students['id_student'].isin(df_unreg_sub)]
+        print("Before removal of weird students:{}".format(str(len(df_filtered))))
+        return df_filtered
+
     def __get_submitted_and_remap(self, date, dfs=None, min_date=None):
         self.logger.debug("Getting already submitted students until the date: %s", date)
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
+        df_reg = dfs[DS_STUD_REG]
+        df_reg = df_reg[ (df_reg["date_unregistration"] > 12) |
+                         (df_reg["date_unregistration"].isnull())
+                       ]['id_student']
+
         df_sa_submitted = df_stud_ass[df_stud_ass.date_submitted <= date]
+        print("Before cutting submitted:{}".format(str(len(df_sa_submitted))))
+        df_sa_submitted = df_sa_submitted[df_sa_submitted.id_student.isin(df_reg)]
+        print("After cutting submitted:{}".format(str(len(df_sa_submitted))))
+
         if min_date is not None:
             df_sa_submitted = df_sa_submitted[df_sa_submitted.date_submitted >= date]
 
@@ -480,7 +505,10 @@ class FeatureExtractionOulad(FeatureExtraction):
         self.logger.debug("Extracting  features")
         df_filtered_students_train = self.retrieve_filtered_students(self.dfs_train)
         df_filtered_students_test = self.retrieve_filtered_students(self.dfs_test)
-        df_filtered_students_test = self.__retrieve_registered_by_date(self.__config.test_labels_from,
+        filter_date = 0
+        if self.problem_definition.filter_only_registered:
+             filter_date = self.__config.test_labels_from
+        df_filtered_students_test = self.__retrieve_registered_by_date(filter_date,
                                                                        df_students=df_filtered_students_test,
                                                                        dfs=self.dfs_test)
 
@@ -529,7 +557,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_stud_vle_test['date_back'] = features_test_to_date - df_stud_vle_test['date'] + 1
 
         if self.include_submitted:
-            min_date = 0
+            min_date = self.submitted_append_min_date
             print("including submitted")
             print(
                 "First deadline:{} second:{}".format(self.__config.test_labels_from - 1, self.__config.train_labels_to))
@@ -545,6 +573,7 @@ class FeatureExtractionOulad(FeatureExtraction):
                                                              df_students=self.retrieve_filtered_students(
                                                                  self.dfs_train),
                                                              dfs=self.dfs_train)
+            df_filtered = self.__filter_unregistered_indate(self.__config.train_labels_to, df_students=df_filtered, dfs=self.dfs_train)
             df_train_labels = self.__retrieve_labels_submitted(df_filtered, self.__config.train_labels_to)
 
             print("counts after:{}".format(df_train_labels.groupby('submitted').size()))
@@ -553,6 +582,11 @@ class FeatureExtractionOulad(FeatureExtraction):
             df_demog_train = self.__load_demog(df_train_labels[['id_student']], self.dfs_train)
             self.data_hdf5_manager.store_df('train/x_demog', df_demog_train)
             df_filtered_students_train = df_train_labels[['id_student']].drop_duplicates()
+
+        # TODO add all aligned by the submission date, more information about the students, no gap whatsoever, maybe better (maybe a bit biased towards submitted, but eh.)
+        # df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.train_labels_to,
+        #                                                         dfs=self.dfs_train, min_date=0)
+
 
         print("Train2: {}".format(str(len(df_filtered_students_train))))
 

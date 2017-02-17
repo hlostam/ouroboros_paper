@@ -15,7 +15,8 @@ class ProblemDefinition:
                  days_for_label_window=None,
                  features_days=0, day_of_presentation=None, y_column='submitted', grouping_column='submit_in',
                  id_column='id_student',
-                 presentation_train=None, training_type=TrainingType.SELFLEARNER):
+                 presentation_train=None, training_type=TrainingType.SELFLEARNER,
+                 filter_only_registered=True):
         """
 
         :param module: code of module (e.g. AAA)
@@ -49,6 +50,7 @@ class ProblemDefinition:
         self.id_column = id_column
         self.training_type = training_type
         self.presentation_train = presentation_train
+        self.filter_only_registered=filter_only_registered
 
         if self.presentation_train is None:
             self.training_type = TrainingType.SELFLEARNER

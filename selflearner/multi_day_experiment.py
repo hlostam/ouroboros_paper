@@ -1,13 +1,18 @@
 import logging
 
-import numpy as np
 import pandas as pd
-import seaborn as sns
+import numpy as np
+import warnings
 
 from selflearner.data_load.features_extraction_oulad import FeatureExtractionOulad
 from selflearner.learning.learner import Learner
 from selflearner.plotting.plotting import plot_df
 from selflearner.problem_definition import ProblemDefinition, TrainingType
+
+# TODO: Unified settings somewhere from global
+pd.set_option('display.max_columns', 0)  # Display any number of columns
+pd.set_option('display.max_rows', 0)  # Display any number of rows
+pd.set_option('expand_frame_repr', False)
 
 
 class ClassifierResult:
@@ -44,14 +49,15 @@ def map_k_toclassname(k):
 class MultiDayExperiment:
     def __init__(self, max_days=11, min_days=0, max_days_to_predict=None, count_all_days_to_predict=False,
                  days_for_label_window=None, count_all_days_for_label_window=False,
-                 include_submitted=False,
+                 include_submitted=False, submitted_append_min_date=0,
                  features=None, problem_defintions: [ProblemDefinition] = None,
                  module_presentations=None, assessment_name=None,
                  grouping_column='submit_in', id_column='id_student',
                  training_type=TrainingType.SELFLEARNER,
                  label_name='submitted', sampler=None, classifiers=None, feature_extractors=None,
                  top_k_prec_list=None, optimise_threshold=True,
-                 metrics=None, metrics_k=None):
+                 metrics=None, metrics_k=None,
+                 filter_only_registered=True):
         if features is None:
             features = ["demog"]
         if feature_extractors is None:
@@ -71,9 +77,10 @@ class MultiDayExperiment:
                                                                        max_days,
                                                                        label_name, grouping_column, id_column,
                                                                        training_type, max_days_to_predict,
-                                                                       count_all_days_to_predict = count_all_days_to_predict,
+                                                                       count_all_days_to_predict=count_all_days_to_predict,
                                                                        days_for_label_window=days_for_label_window,
-                                                                       count_all_days_for_label_window=count_all_days_for_label_window)
+                                                                       count_all_days_for_label_window=count_all_days_for_label_window,
+                                                                       filter_only_registered=filter_only_registered)
         self.max_days = max_days
         self.max_days_to_predict = max_days_to_predict
         self.min_days = min_days
@@ -95,6 +102,8 @@ class MultiDayExperiment:
             self.classifiers_names = [name for cl, name in self.classifiers]
         self.experiment_results = []
         self.include_submitted = include_submitted
+        self.submitted_append_min_date = submitted_append_min_date
+        self.filter_only_registered=filter_only_registered
 
     def metric_to_df(self, metric):
         df = pd.DataFrame(self.metrics[metric])
@@ -123,7 +132,9 @@ class MultiDayExperiment:
                                                                             problem_def.days_to_predict,
                                                                             problem_def.days_for_label_window))
             problem_def = problem_def
-            fe = FeatureExtractionOulad(problem_def, include_submitted=self.include_submitted)
+            fe = FeatureExtractionOulad(problem_def,
+                                        include_submitted=self.include_submitted,
+                                        submitted_append_min_date=self.submitted_append_min_date)
 
             data = fe.extract_features(features=self.features)
             train_data = data["all_train"]
@@ -134,7 +145,8 @@ class MultiDayExperiment:
             experiment_result.class_numbers_train = self._get_class_counts(train_data)
             experiment_result.class_numbers_test = self._get_class_counts(test_data)
 
-            # Learning
+            # Learningq
+
             if self.classifiers is not None:
                 learner = Learner(train_data, test_data, self.label_name, problem_def, sampler=self.sampler,
                                   classifiers=self.classifiers, feature_extractors=self.feature_extractors,
@@ -400,7 +412,8 @@ class MultiDayExperiment:
     def create_problem_definitions(self, module_presentations, assessment_name, min_days, max_days, label_name,
                                    grouping_column,
                                    id_column, training_type, max_days_to_predict, count_all_days_to_predict=False,
-                                   days_for_label_window=None, count_all_days_for_label_window=False):
+                                   days_for_label_window=None, count_all_days_for_label_window=False,
+                                   filter_only_registered=True):
         """
         Creates list of problem definitions that are used for experiments. These can be trained separately in parallel.
         :param min_days:
@@ -440,6 +453,7 @@ class MultiDayExperiment:
                                                                days_to_cutoff=day,
                                                                days_to_predict=days_to_predict,
                                                                days_for_label_window=days_for_label_window_local,
+                                                               filter_only_registered=filter_only_registered,
                                                                y_column=label_name, grouping_column=grouping_column,
                                                                id_column=id_column, presentation_train=presentation_train,
                                                                training_type=training_type)

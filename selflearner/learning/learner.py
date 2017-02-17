@@ -21,6 +21,16 @@ from .evaluation_util import top_k_recall
 from selflearner.plotting import plotting
 
 
+def auc_using_step(recall, precision):
+    return sum([(recall[i] - recall[i + 1]) * precision[i]
+                for i in range(len(recall) - 1)])
+
+
+def roam_average_precision(y_true, y_score, sample_weight=None):
+    precision, recall, thresholds = precision_recall_curve(
+        y_true, y_score, sample_weight=sample_weight)
+    return auc_using_step(recall, precision)
+
 class Learner:
     def __init__(self, train_data, test_data, label, problem_definition: ProblemDefinition, sampler=None,
                  classifiers=None, feature_extractors=None, topk_prec_list=None, optimise_threshold=True,
@@ -203,6 +213,7 @@ class Learner:
 
         return max_thr, max_fscore, max_prec, max_recall, max_conf_matrix
 
+
     def train_inner(self):
         """
         Trains all the classifiers in self.classifiers.
@@ -295,7 +306,8 @@ class Learner:
                 self.fscore.append(max_fscore)
                 self.prec.append(max_prec)
                 self.recall.append(max_recall)
-                pr_auc = average_precision_score(self.y_test, y_prob)
+                # pr_auc = average_precision_score(self.y_test, y_prob)
+                pr_auc = roam_average_precision(self.y_test, y_prob)
 
                 self.pr_auc.append(pr_auc)
 
