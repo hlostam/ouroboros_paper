@@ -266,7 +266,7 @@ class MultiDayExperiment:
 
         return pd.DataFrame(metric_list)
 
-    def get_metric_daily_df(self, metric_name, k=None):
+    def get_metric_daily_df(self, metric_name, k=None, days_to_predict=None, days_for_label_window=None):
         if k is None:
             df = self.get_metrics_df()
         else:
@@ -274,8 +274,16 @@ class MultiDayExperiment:
             df = df.loc[df['k'] == k]
 
         df_metric = df[['day', 'days_to_predict', 'days_for_label_window', 'code_module', 'classifier', metric_name]]
-        df_metric = df_metric.set_index(['day', 'days_to_predict', 'days_for_label_window', 'code_module', 'classifier'])
-        df_metric = df_metric.unstack().reset_index().groupby(['day']).mean()
+
+        if days_for_label_window is not None:
+            df_metric = df_metric[df_metric.days_for_label_window == days_for_label_window]
+
+        if days_to_predict is not None:
+            df_metric = df_metric[df_metric.days_to_predict == days_to_predict]
+
+        df_metric = df_metric[['day', 'days_to_predict', 'days_for_label_window', 'code_module', 'classifier', metric_name]]
+        df_metric = df_metric.groupby(['day', 'classifier'])[[metric_name]].mean()
+        df_metric = df_metric.unstack()
         df_metric.columns = df_metric.columns.droplevel(0)
         return df_metric
 
@@ -307,8 +315,8 @@ class MultiDayExperiment:
         return g.apply(lambda x: x.order(ascending=False).head(top))
 
     def plot_metric(self, metric_name, k=None, metric_friendly_name=None, ymin=0, ymax=1, label_postfix='', width=14,
-                    height=None):
-        df = self.get_metric_daily_df(metric_name, k)
+                    height=None, days_to_predict=None, days_for_label_window=None):
+        df = self.get_metric_daily_df(metric_name, k,days_to_predict=days_to_predict, days_for_label_window=days_for_label_window)
         min_index = df.index.min()
         max_index = df.index.max()
         index_name = df.index.name
