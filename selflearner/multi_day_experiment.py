@@ -20,7 +20,7 @@ class ClassifierResult:
     def __init__(self, metrics=None,
                  metrics_k=None):
         if metrics is None:
-            metrics = ['auc', 'prec', 'recall', 'fscore', 'pr_auc']
+            metrics = ['auc', 'prec', 'recall', 'fscore', 'pr_auc','pr_auc_linear']
         if metrics_k is None:
             metrics_k = ['top_k_prec', 'top_k_rec']
         self.metrics = {}
@@ -68,7 +68,7 @@ class MultiDayExperiment:
         if top_k_prec_list is None:
             top_k_prec_list = [5, 10, 25, 50, 75]
         if metrics is None:
-            metrics = ['auc', 'prec', 'recall', 'fscore', 'pr_auc']
+            metrics = ['auc', 'prec', 'recall', 'fscore', 'pr_auc','pr_auc_linear']
         if metrics_k is None:
             metrics_k = ['top_k_prec', 'top_k_rec']
         if problem_defintions is not None:

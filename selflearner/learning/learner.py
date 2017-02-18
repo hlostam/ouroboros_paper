@@ -45,6 +45,7 @@ class Learner:
         # self.top_k_prec = []
         self.recall = []
         self.pr_auc = []
+        self.pr_auc_linear = []
         # self.coef_lr = None
         # self.coef_svc = None
 
@@ -306,11 +307,11 @@ class Learner:
                 self.fscore.append(max_fscore)
                 self.prec.append(max_prec)
                 self.recall.append(max_recall)
-                # pr_auc = average_precision_score(self.y_test, y_prob)
+                pr_auc_linear = average_precision_score(self.y_test, y_prob)
                 pr_auc = roam_average_precision(self.y_test, y_prob)
 
                 self.pr_auc.append(pr_auc)
-
+                self.pr_auc_linear.append(pr_auc_linear)
                 # cm = confusion_matrix(self.y_test, predictions)
                 # print(cm)
 
@@ -334,6 +335,7 @@ class Learner:
                 self.prec.append(precision_score(self.y_test, predictions))
                 self.recall.append(recall_score(self.y_test, predictions))
                 self.pr_auc.append(0)
+                self.pr_auc_linear.append(0)
                 self.auc.append(0)
             if hasattr(clf, 'best_params_'):
                 print('Best params on train data')
