@@ -11,7 +11,8 @@ class ProblemDefinition:
     ASSESSMENT = 'assessment'
     MODPRES_DAY = 'days'
 
-    def __init__(self, module, presentation, assessment_name, days_to_cutoff, days_to_predict=None,
+    def __init__(self, module, presentation, assessment_name, days_to_cutoff,
+                 days_to_predict=None,
                  days_for_label_window=None,
                  features_days=0, day_of_presentation=None, y_column='submitted', grouping_column='submit_in',
                  id_column='id_student',
@@ -50,7 +51,7 @@ class ProblemDefinition:
         self.id_column = id_column
         self.training_type = training_type
         self.presentation_train = presentation_train
-        self.filter_only_registered=filter_only_registered
+        self.filter_only_registered = filter_only_registered
 
         if self.presentation_train is None:
             self.training_type = TrainingType.SELFLEARNER

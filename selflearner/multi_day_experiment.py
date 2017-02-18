@@ -78,9 +78,9 @@ class MultiDayExperiment:
                                                                        max_days,
                                                                        label_name, grouping_column, id_column,
                                                                        training_type, max_days_to_predict,
-                                                                       count_all_days_to_predict=count_all_days_to_predict,
-                                                                       days_for_label_window=days_for_label_window,
-                                                                       count_all_days_for_label_window=count_all_days_for_label_window,
+                                                                       count_all_days_to_predict = count_all_days_to_predict,
+                                                                       days_for_label_window = days_for_label_window,
+                                                                       count_all_days_for_label_window = count_all_days_for_label_window,
                                                                        filter_only_registered=filter_only_registered)
         self.max_days = max_days
         self.max_days_to_predict = max_days_to_predict
@@ -450,12 +450,14 @@ class MultiDayExperiment:
 
                 for days_to_predict in max_days_to_predict_local:
                     if days_for_label_window is None:
-                        days_for_label_window = days_to_predict
+                        days_for_label_window_inner = days_to_predict
+                    else:
+                        days_for_label_window_inner = days_for_label_window
 
                     if count_all_days_for_label_window:
-                        max_days_for_label = np.arange(days_for_label_window)
+                        max_days_for_label = np.arange(days_for_label_window_inner)
                     else:
-                        max_days_for_label = [days_for_label_window]
+                        max_days_for_label = [days_for_label_window_inner]
 
                     for days_for_label_window_local in max_days_for_label:
                         problem_definition = ProblemDefinition(module, presentation_test, assessment_name,
