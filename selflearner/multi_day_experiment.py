@@ -8,6 +8,7 @@ from selflearner.data_load.features_extraction_oulad import FeatureExtractionOul
 from selflearner.learning.learner import Learner
 from selflearner.plotting.plotting import plot_df
 from selflearner.problem_definition import ProblemDefinition, TrainingType
+import seaborn as sns
 
 # TODO: Unified settings somewhere from global
 pd.set_option('display.max_columns', 0)  # Display any number of columns
