@@ -786,9 +786,14 @@ class FeatureExtractionOulad(FeatureExtraction):
         # before start of the presentation
         df_stud_vle_date_filter_before_start = df_stud_vle_date_filter.loc[
             df_stud_vle_date_filter.date < presentation_start_day]
+
         df_date_sums = df_stud_vle_date_filter_before_start.groupby(['id_student', 'date'])[['sum_click']].agg(
             ['count', 'sum']).reset_index()
         df_date_sums.columns = ['id_student', 'date', 'count_materials', 'sum_click']
+        # No student has any info before start -> empty DF
+        if len(df_date_sums) < 1:
+            return ds_students
+
         df_date_visit_stats_beforestart_active = df_date_sums.groupby(['id_student']).agg(
             {'count_materials': {'count_days': 'count', 'sum_material': 'sum', 'max_materials': 'max',
                                  'min_materials:': 'min',
