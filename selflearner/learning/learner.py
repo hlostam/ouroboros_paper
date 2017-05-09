@@ -106,6 +106,10 @@ class Learner:
         logging.debug("Pre-processing data...")
 
         # Same train and test - union of train/test features.
+        # Deletes the completely empty columns, containing only na
+        self.train_data = self.train_data.dropna(how='all', axis=1)
+        self.test_data = self.test_data.dropna(how='all', axis=1)
+
         x_train_cols = self.train_data.columns
         x_test_cols = self.test_data.columns
         x_intersect_cols = [x for x in x_train_cols if x in x_test_cols]
@@ -129,6 +133,7 @@ class Learner:
         x_num_test = self.test_data.select_dtypes(include=['int64', 'float']).drop(drop_cols, axis=1).as_matrix()
         imp = Imputer(missing_values='NaN', strategy='mean', axis=0)
         x_num_train = imp.fit_transform(x_num_train)
+
         x_num_test = imp.fit_transform(x_num_test)
 
         # # scale to <0,1>
