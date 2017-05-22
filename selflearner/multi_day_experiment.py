@@ -8,7 +8,9 @@ from selflearner.data_load.features_extraction_oulad import FeatureExtractionOul
 from selflearner.learning.learner import Learner
 from selflearner.plotting.plotting import plot_df
 from selflearner.problem_definition import ProblemDefinition, TrainingType
+from selflearner.module_first_submission import get_first_submission
 import seaborn as sns
+from pandas.core.base import (GroupByError )
 
 # TODO: Unified settings somewhere from global
 pd.set_option('display.max_columns', 0)  # Display any number of columns
@@ -123,6 +125,17 @@ class MultiDayExperiment:
         Performs the whole experiment, iterates over days and list of problem definitions.
         """
         for problem_def in self.problem_definitions:
+           try:
+              self.perform_problem_def(problem_def)
+           except GroupByError as e:
+              logging.error(
+                "Problem did not finish: {} {}, Day: {} Predicted day: {} LabelWindow: {} Exception: {}".format(problem_def.module, problem_def.presentation,
+                                                                          problem_def.days_to_cutoff,
+                                                                          problem_def.days_to_predict,
+                                                                          problem_def.days_for_label_window,
+                                                                          e)
+              )
+    def perform_problem_def(self, problem_def):
             logging.info(
                 "{} {}, Day: {} Predicted day: {} LabelWindow: {}".format(problem_def.module, problem_def.presentation,
                                                                           problem_def.days_to_cutoff,
@@ -439,10 +452,19 @@ class MultiDayExperiment:
         :return:
         """
         problem_definitions = []
-        days = np.arange(min_days, max_days + 1)
         for (module, presentation_test, presentation_train) in module_presentations:
+            max_days_local = max_days
+            max_days_to_predict_l1 = max_days
+            if max_days == 'auto':
+                max_days_local = get_first_submission(module, presentation_train, assessment_name)
+                max_days_local = max_days_local - 1 
+            if max_days_to_predict == 'auto':
+               max_days_to_predict_l1 = max_days_local
+            print(min_days)
+            days = np.arange(min_days, max_days_local + 1)
             for day in days:
-                min_days_to_predict = min(max_days_to_predict, day)
+                print(day)
+                min_days_to_predict = min(max_days_to_predict_l1, day)
                 if count_all_days_to_predict:
                     max_days_to_predict_local = np.arange(min_days_to_predict + 1)
                 else:
