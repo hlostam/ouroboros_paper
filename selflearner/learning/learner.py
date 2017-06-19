@@ -179,9 +179,13 @@ class Learner:
         logging.info('Test 1: %s', len(np.where(self.y_test > 0)[0]))
 
     def handle_sampling(self):
-        if (self.sampler is not None):
+        if self.sampler is not None:
             print("Sampling:{}".format(type(self.sampler).__name__))
-            self.x_train, self.y_train = self.sampler.fit_sample(self.x_train, self.y_train)
+            try:
+                self.x_train, self.y_train = self.sampler.fit_sample(self.x_train, self.y_train)
+            except ValueError:
+                logging.error("Sampling couldnt be done")
+                pass
 
     def set_classifiers(self, classifiers):
         """Trains the given classifiers"""
