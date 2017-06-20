@@ -302,8 +302,11 @@ class FeatureExtractionOulad(FeatureExtraction):
     def __init__(self, problem_definition: ProblemDefinition,
                  hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH),
                  include_submitted=False,
-                 submitted_append_min_date=0):
-        super().__init__(problem_definition, include_submitted=include_submitted, submitted_append_min_date=submitted_append_min_date)
+                 submitted_append_min_date=0,
+                 submitted_append_min_date_rel=None):
+        super().__init__(problem_definition, include_submitted=include_submitted,
+                         submitted_append_min_date=submitted_append_min_date,
+                         submitted_append_min_date_rel=submitted_append_min_date_rel)
         self.hdf5_path = hdf5_path
         self.data_hdf5_manager = Hdf5Features(problem_definition)
         self.store_manager = PytablesHdf5Manager(hdf5_path)
@@ -379,7 +382,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         print("unreg now and sub:{}".format(len(df_unreg_sub)))
         print("Before removal of weird students:{}".format(str(len(df_students))))
         df_filtered = df_students.loc[~df_students['id_student'].isin(df_unreg_sub)]
-        print("Before removal of weird students:{}".format(str(len(df_filtered))))
+        print("After removal of weird students:{}".format(str(len(df_filtered))))
         return df_filtered
 
     def __get_submitted_and_remap(self, date, dfs=None, min_date=None):
@@ -518,7 +521,13 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered_students_test = self.__filter_submitted_until_date(self.__config.test_labels_from - 1,
                                                                        df_filtered_students_test, dfs=self.dfs_test)
 
-        df_filtered_students_train = self.__filter_submitted_until_date(self.__config.train_labels_from - 1,
+        # Maximum of both dates for taking students into consideration is taken
+        max_submited_append_date = self.submitted_append_min_date
+        if self.submitted_append_min_date_rel is not None:
+            subappend_date_absolute = self.__config.train_labels_to - self.submitted_append_min_date_rel
+            max_submited_append_date = max(max_submited_append_date, subappend_date_absolute)
+
+        df_filtered_students_train = self.__filter_submitted_until_date(max(self.__config.train_labels_from - 1, max_submited_append_date),
                                                                         df_filtered_students_train, dfs=self.dfs_train)
 
         print("Train: {}".format(str(len(df_filtered_students_train))))

@@ -17,6 +17,8 @@ pd.set_option('display.max_columns', 0)  # Display any number of columns
 pd.set_option('display.max_rows', 0)  # Display any number of rows
 pd.set_option('expand_frame_repr', False)
 
+from imblearn.over_sampling import SMOTE
+
 
 class ClassifierResult:
     def __init__(self, metrics=None,
@@ -52,7 +54,8 @@ def map_k_toclassname(k):
 class MultiDayExperiment:
     def __init__(self, max_days=11, min_days=0, max_days_to_predict=None, count_all_days_to_predict=False,
                  days_for_label_window=None, count_all_days_for_label_window=False,
-                 include_submitted=False, submitted_append_min_date=0,
+                 include_submitted=False, submitted_append_min_date=0, submitted_append_min_date_rel=None,
+                 generate_all_append_min_dates=False,
                  features=None, problem_defintions: [ProblemDefinition] = None,
                  module_presentations=None, assessment_name=None,
                  grouping_column='submit_in', id_column='id_student',
@@ -60,7 +63,8 @@ class MultiDayExperiment:
                  label_name='submitted', sampler=None, classifiers=None, feature_extractors=None,
                  top_k_prec_list=None, optimise_threshold=True,
                  metrics=None, metrics_k=None,
-                 filter_only_registered=True):
+                 filter_only_registered=True
+                 ):
         if features is None:
             features = ["demog"]
         if feature_extractors is None:
@@ -83,7 +87,10 @@ class MultiDayExperiment:
                                                                        count_all_days_to_predict = count_all_days_to_predict,
                                                                        days_for_label_window = days_for_label_window,
                                                                        count_all_days_for_label_window = count_all_days_for_label_window,
-                                                                       filter_only_registered=filter_only_registered)
+                                                                       filter_only_registered=filter_only_registered,
+                                                                       submitted_append_min_date=submitted_append_min_date,
+                                                                       submitted_append_min_date_rel=submitted_append_min_date_rel,
+                                                                       generate_all_append_min_dates=generate_all_append_min_dates)
         self.max_days = max_days
         self.max_days_to_predict = max_days_to_predict
         self.min_days = min_days
@@ -137,18 +144,21 @@ class MultiDayExperiment:
               )
     def perform_problem_def(self, problem_def):
             logging.info(
-                "{} {}, Day: {} Predicted day: {} LabelWindow: {}".format(problem_def.module, problem_def.presentation,
+                "{} {}, Day: {} Predicted day: {} LabelWindow: {} MinSubmitRel: {}".format(problem_def.module, problem_def.presentation,
                                                                           problem_def.days_to_cutoff,
                                                                           problem_def.days_to_predict,
-                                                                          problem_def.days_for_label_window))
-            print("{} {}, Day: {} Predicted day: {} LabelWindow: {}".format(problem_def.module, problem_def.presentation,
+                                                                          problem_def.days_for_label_window,
+                                                                          problem_def.submitted_append_min_date_rel))
+            print("{} {}, Day: {} Predicted day: {} LabelWindow: {} MinSubmitRel: {}".format(problem_def.module, problem_def.presentation,
                                                                             problem_def.days_to_cutoff,
                                                                             problem_def.days_to_predict,
-                                                                            problem_def.days_for_label_window))
+                                                                            problem_def.days_for_label_window,
+                                                                            problem_def.submitted_append_min_date_rel))
             problem_def = problem_def
             fe = FeatureExtractionOulad(problem_def,
                                         include_submitted=self.include_submitted,
-                                        submitted_append_min_date=self.submitted_append_min_date)
+                                        submitted_append_min_date=problem_def.submitted_append_min_date,
+                                        submitted_append_min_date_rel=problem_def.submitted_append_min_date_rel)
 
             data = fe.extract_features(features=self.features)
             train_data = data["all_train"]
@@ -242,6 +252,8 @@ class MultiDayExperiment:
             list_item = {'day': m.problem_definition.days_to_cutoff,
                          'days_to_predict': m.problem_definition.days_to_predict,
                          'days_for_label_window': m.problem_definition.days_for_label_window,
+                         'submitted_append_min_date': m.problem_definition.submitted_append_min_date,
+                         'submitted_append_min_date_rel':m.problem_definition.submitted_append_min_date_rel,
                          'code_module': m.problem_definition.module,
                          'code_presentation': m.problem_definition.presentation}
             for k, v in m.class_numbers_train.items():
@@ -257,7 +269,8 @@ class MultiDayExperiment:
             df_series.loc[:, 'train_NS_ratio'] = df_series['train_NS'] / (df_series['train_NS'] + df_series['train_S'])
             df_series.loc[:, 'train_S_ratio'] = df_series['train_S'] / (df_series['train_NS'] + df_series['train_S'])
             df_series = df_series[
-                ['code_module', 'code_presentation', 'day', 'days_to_predict', 'days_for_label_window', 'train_NS_ratio', 'test_NS_ratio',
+                ['code_module', 'code_presentation', 'day', 'days_to_predict', 'days_for_label_window',
+                 'submitted_append_min_date', 'submitted_append_min_date_rel', 'train_NS_ratio', 'test_NS_ratio',
                  'train_S_ratio', 'test_S_ratio']]
 
         return df_series
@@ -270,6 +283,8 @@ class MultiDayExperiment:
                 list_item = {'day': r.problem_definition.days_to_cutoff,
                              'days_to_predict': r.problem_definition.days_to_predict,
                              'days_for_label_window': r.problem_definition.days_for_label_window,
+                             'submitted_append_min_date':r.problem_definition.submitted_append_min_date,
+                             'submitted_append_min_date_rel':r.problem_definition.submitted_append_min_date_rel,
                              'code_module': r.problem_definition.module,
                              'code_presentation': r.problem_definition.presentation,
                              'classifier': key}
@@ -286,7 +301,8 @@ class MultiDayExperiment:
             df = self.get_metrics_k_df()
             df = df.loc[df['k'] == k]
 
-        df_metric = df[['day', 'days_to_predict', 'days_for_label_window', 'code_module', 'classifier', metric_name]]
+        df_metric = df[['day', 'days_to_predict', 'days_for_label_window',
+                        'submitted_append_min_date','submitted_append_min_date_rel', 'code_module', 'classifier', metric_name]]
 
         if days_for_label_window is not None:
             df_metric = df_metric[df_metric.days_for_label_window == days_for_label_window]
@@ -294,7 +310,9 @@ class MultiDayExperiment:
         if days_to_predict is not None:
             df_metric = df_metric[df_metric.days_to_predict == days_to_predict]
 
-        df_metric = df_metric[['day', 'days_to_predict', 'days_for_label_window', 'code_module', 'classifier', metric_name]]
+        df_metric = df_metric[['day', 'days_to_predict', 'days_for_label_window',
+                               'submitted_append_min_date', 'submitted_append_min_date_rel',
+                               'code_module', 'classifier', metric_name]]
         df_metric = df_metric.groupby(['day', 'classifier'])[[metric_name]].mean()
         df_metric = df_metric.unstack()
         df_metric.columns = df_metric.columns.droplevel(0)
@@ -312,6 +330,8 @@ class MultiDayExperiment:
                                     'day': r.problem_definition.days_to_cutoff,
                                     'days_to_predict': r.problem_definition.days_to_predict,
                                     'days_for_label_window': r.problem_definition.days_for_label_window,
+                                    'submitted_append_min_date': r.problem_definition.submitted_append_min_date,
+                                    'submitted_append_min_date_rel': r.problem_definition.submitted_append_min_date_rel,
                                     'assessment': r.problem_definition.assessment_name
                                     })
             for clf_name, clf_result in r.classifier_results.items():
@@ -357,6 +377,8 @@ class MultiDayExperiment:
                                      'days_for_label_window': r.problem_definition.days_for_label_window,
                                      'code_module': r.problem_definition.module,
                                      'code_presentation': r.problem_definition.presentation,
+                                     'submitted_append_min_date':r.problem_definition.submitted_append_min_date,
+                                     'submitted_append_min_date_rel':r.problem_definition.submitted_append_min_date_rel,
                                      'classifier': key,
                                      'k': k,
                                      metric_name: value}
@@ -365,7 +387,9 @@ class MultiDayExperiment:
                     try:
                         df_metrics_k = df_metrics_k.merge(df_metric_k,
                                                           on=['code_module', 'code_presentation', 'day',
-                                                              'days_to_predict', 'days_for_label_window', 'k',
+                                                              'days_to_predict', 'days_for_label_window',
+                                                              'submitted_append_min_date', 'submitted_append_min_date_rel',
+                                                              'k',
                                                               'classifier'])
                     except KeyError:
                         df_metrics_k = df_metric_k
@@ -374,7 +398,8 @@ class MultiDayExperiment:
 
     def get_metric_k_daily_df(self, metric_name, k):
         df = self.get_metrics_k_df()
-        df = df.loc[df['k'] == k, ['day', 'days_to_predict', 'days_for_label_window', 'code_module', 'classifier', 'k', metric_name]]
+        df = df.loc[df['k'] == k, ['day', 'days_to_predict', 'days_for_label_window', 'submitted_append_min_date',
+                                   'submitted_append_min_date_rel', 'code_module', 'classifier', 'k', metric_name]]
         # df_metric = df[['day', 'code_module', 'classifier','k', metric_name]]
 
     def plot_class_counts(self, relative_counts=True, palette="deep"):
@@ -435,9 +460,12 @@ class MultiDayExperiment:
                                    grouping_column,
                                    id_column, training_type, max_days_to_predict, count_all_days_to_predict=False,
                                    days_for_label_window=None, count_all_days_for_label_window=False,
-                                   filter_only_registered=True):
+                                   filter_only_registered=True, submitted_append_min_date=0,
+                                   submitted_append_min_date_rel=None, generate_all_append_min_dates=False):
         """
         Creates list of problem definitions that are used for experiments. These can be trained separately in parallel.
+        :param filter_only_registered:
+        :param days_for_label_window:
         :param min_days:
         :param count_all_days_to_predict:
         :param max_days_to_predict:
@@ -460,6 +488,11 @@ class MultiDayExperiment:
                 max_days_local = max_days_local - 1 
             if max_days_to_predict == 'auto':
                max_days_to_predict_l1 = max_days_local
+
+            append_days_rel = [submitted_append_min_date_rel]
+            if generate_all_append_min_dates is True:
+                append_days_rel = np.arange(0, submitted_append_min_date_rel + 1)
+
             print(min_days)
             days = np.arange(min_days, max_days_local + 1)
             for day in days:
@@ -482,13 +515,66 @@ class MultiDayExperiment:
                         max_days_for_label = [days_for_label_window_inner]
 
                     for days_for_label_window_local in max_days_for_label:
-                        problem_definition = ProblemDefinition(module, presentation_test, assessment_name,
-                                                               days_to_cutoff=day,
-                                                               days_to_predict=days_to_predict,
-                                                               days_for_label_window=days_for_label_window_local,
-                                                               filter_only_registered=filter_only_registered,
-                                                               y_column=label_name, grouping_column=grouping_column,
-                                                               id_column=id_column, presentation_train=presentation_train,
-                                                               training_type=training_type)
-                        problem_definitions.append(problem_definition)
+                        for submitted_append_min_date_rel_loc in append_days_rel:
+                            problem_definition = ProblemDefinition(module, presentation_test, assessment_name,
+                                                                   days_to_cutoff=day,
+                                                                   days_to_predict=days_to_predict,
+                                                                   days_for_label_window=days_for_label_window_local,
+                                                                   filter_only_registered=filter_only_registered,
+                                                                   y_column=label_name, grouping_column=grouping_column,
+                                                                   id_column=id_column, presentation_train=presentation_train,
+                                                                   submitted_append_min_date=submitted_append_min_date,
+                                                                   submitted_append_min_date_rel=submitted_append_min_date_rel_loc,
+                                                                   training_type=training_type)
+                            problem_definitions.append(problem_definition)
         return problem_definitions
+
+def main():
+    print("Beginning the experiment")
+    from sklearn.dummy import DummyClassifier
+    from sklearn.ensemble import RandomForestClassifier
+    classifiers = [
+        (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5), "RF"),
+        # (DummyClassifier(strategy="constant", constant=1), "Base[NS]")
+    ]
+    features = [
+          "demog"
+          , "vle_statistics"
+          , 'vle_statistics_beforestart'
+          , "vle_day_activity_type_flags"
+          , "vle_day_activity_type"
+          , 'vle_day'
+          , 'vle_day_flags'
+          , 'reg_statistics'
+    ]
+
+    modules = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
+    # modules = ["EEE"]
+    presentations = ["2014J"]
+
+    # 19-15
+    md = MultiDayExperiment(
+            max_days=0,
+            max_days_to_predict=None,
+            include_submitted=True,
+            module_presentations=[("AAA", "2014J", "2014J"),
+                                  # ("CCC", "2014J", "2014J")
+                                  ],
+            assessment_name="TMA 1",
+            classifiers=classifiers,
+            days_for_label_window=0,
+            count_all_days_to_predict=False,
+            count_all_days_for_label_window=False,
+            features=features,
+            filter_only_registered=False,
+            # sampler=SMOTE(),
+            submitted_append_min_date=-10,
+            submitted_append_min_date_rel=30,
+            training_type=TrainingType.SELFLEARNER,
+            generate_all_append_min_dates=True
+    )
+    md.perform_experiment()
+    print(md.classifiers_names)
+
+if __name__ == "__main__":
+    main()
