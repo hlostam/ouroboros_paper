@@ -538,8 +538,8 @@ def main():
         # (DummyClassifier(strategy="constant", constant=1), "Base[NS]")
     ]
     features = [
-          "demog"
-          , "vle_statistics"
+          "demog",
+           "vle_statistics"
           , 'vle_statistics_beforestart'
           , "vle_day_activity_type_flags"
           , "vle_day_activity_type"
@@ -552,13 +552,14 @@ def main():
     # modules = ["EEE"]
     presentations = ["2014J"]
 
-    # 19-15
     md = MultiDayExperiment(
-            max_days=0,
+            max_days=10,
+            min_days=10,
             max_days_to_predict=None,
             include_submitted=True,
-            module_presentations=[("AAA", "2014J", "2014J"),
-                                  # ("CCC", "2014J", "2014J")
+            module_presentations=[
+                                  # ("DDD", "2014J", "2014J"),
+                                  ("CCC", "2014J", "2014J")
                                   ],
             assessment_name="TMA 1",
             classifiers=classifiers,
@@ -568,11 +569,12 @@ def main():
             features=features,
             filter_only_registered=False,
             # sampler=SMOTE(),
-            submitted_append_min_date=-10,
-            submitted_append_min_date_rel=30,
             training_type=TrainingType.SELFLEARNER,
+            submitted_append_min_date=-10,
+            submitted_append_min_date_rel=10,
             generate_all_append_min_dates=True
     )
+    # 19-15
     md.perform_experiment()
     print(md.classifiers_names)
 

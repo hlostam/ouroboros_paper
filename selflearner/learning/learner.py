@@ -20,6 +20,7 @@ from .evaluation_util import top_k_precision
 from .evaluation_util import top_k_recall
 from selflearner.plotting import plotting
 
+import matplotlib.pyplot as plt
 
 def auc_using_step(recall, precision):
     return sum([(recall[i] - recall[i + 1]) * precision[i]
@@ -223,6 +224,53 @@ class Learner:
 
         return max_thr, max_fscore, max_prec, max_recall, max_conf_matrix
 
+    def show_hist(self, y_train, y_prob):
+        # y_prob_train = old_model.predict_proba(x_train)[:, 1]
+        fig, ax = plt.subplots()
+        ax.hist(y_prob[y_train > 0], bins=20)
+        ax.hist(y_prob[y_train < 1], bins=20)
+        fig.show()
+
+    def do_magic(self, x_train, y_train, x_test, y_test, old_model):
+        y_prob_train = old_model.predict_proba(x_train)[:, 1]
+        prec, rec, thresh = precision_recall_curve(y_train, y_prob_train)
+        # # max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(
+        # #     y_prob_train,
+        # #     y_train,
+        # #     thresh)
+        # logging.debug("Max thr: {}".format(max_thr) )
+        # # cond = (y_prob_train >= (max_thr - 0.05) ) & (y_prob_train < (max_thr + 0.05)) & (y_train > 0)
+        # cond = (y_prob_train <= (max_thr+0.02)) & (y_train > 0)
+
+        mask_array = np.zeros(len(y_prob_train), dtype=bool)
+        num_to_del = len(y_train[y_train > 0]) - len(y_train[y_train < 1])
+        # num_to_del = 1300
+        ind_sorted = y_prob_train.argsort()
+        ind_to_keep = np.where(y_train > 0)[0]
+        ind = np.array([x for x in ind_sorted if x in ind_to_keep])
+        ind = ind[:num_to_del]
+
+        # ind = y_prob_train.argsort()[y_train > 0][:num_to_del]
+        mask_array[ind] = True
+        cond = mask_array & (y_train > 0)
+
+        indices_to_remain = np.where(~cond)
+        x_train = x_train[indices_to_remain]
+        y_train = y_train[indices_to_remain]
+        old_model.fit(x_train, y_train)
+        logging.debug("Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
+
+        y_prob_train = old_model.predict_proba(x_train)[:, 1]
+        # plt.hist(y_prob_train, bins='auto')
+        y_prob = old_model.predict_proba(x_test)[:, 1]
+        # plt.hist(y_prob, bins='auto')
+        # plt.show()
+        # self.show_hist(y_train, y_prob_train)
+
+        fpr, tpr, thresholds = metrics.roc_curve(y_test, y_prob)
+        logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
+
+        return x_train, y_train, old_model
 
     def train_inner(self):
         """
@@ -268,12 +316,27 @@ class Learner:
             is_p_ok = False
             if hasattr(clf, 'predict_proba'):
                 p = clf.predict_proba(self.x_test)
+                y_prob_train = clf.predict_proba(self.x_train)[:,1]
                 try:
                     y_prob = p[:, 1]
                     is_p_ok = True
                 except IndexError:
                     print("no positive class in predicted data")
                     is_p_ok = False
+
+            # plt.hist(y_prob, bins='auto')
+            # plt.show()
+            # plt.hist(y_prob_train, bins='auto')
+
+            # fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
+            # logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
+            # x_train = np.array(self.x_train)
+            # y_train = np.array(self.y_train)
+
+            # self.show_hist(y_train, y_prob_train)
+
+            # for _ in range(100):
+            # x_train, y_train, clf = self.do_magic(x_train, y_train, self.x_test, self.y_test, clf)
 
             if is_p_ok:
                 self.all_p[:, current_index] = y_prob

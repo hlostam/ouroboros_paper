@@ -350,7 +350,8 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         # Filter banked students
         df_ass = dfs[DS_STUD_ASSESSMENTS]
-        df_ass_not_banked = df_ass.loc[df_ass['is_banked'] == 0]
+        df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0) & (df_ass['date_submitted'] <= 32)]
+
         self.logger.debug("All students: %s Not banked: %s", str(len(df_ass)), str(len(df_ass_not_banked)))
         df = pd.merge(df_studinfo, df_ass_not_banked, how='left', on='id_student')
         df.fillna(SUBMIT_NEVER, inplace=True)
@@ -522,12 +523,8 @@ class FeatureExtractionOulad(FeatureExtraction):
                                                                        df_filtered_students_test, dfs=self.dfs_test)
 
         # Maximum of both dates for taking students into consideration is taken
-        max_submited_append_date = self.submitted_append_min_date
-        if self.submitted_append_min_date_rel is not None:
-            subappend_date_absolute = self.__config.train_labels_to - self.submitted_append_min_date_rel
-            max_submited_append_date = max(max_submited_append_date, subappend_date_absolute)
 
-        df_filtered_students_train = self.__filter_submitted_until_date(max(self.__config.train_labels_from - 1, max_submited_append_date),
+        df_filtered_students_train = self.__filter_submitted_until_date(self.__config.train_labels_from - 1,
                                                                         df_filtered_students_train, dfs=self.dfs_train)
 
         print("Train: {}".format(str(len(df_filtered_students_train))))
@@ -566,10 +563,19 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_stud_vle_test['date_back'] = features_test_to_date - df_stud_vle_test['date'] + 1
 
         if self.include_submitted:
-            min_date = self.submitted_append_min_date
+            # min_date = self.submitted_append_min_date
             print("including submitted")
             print(
                 "First deadline:{} second:{}".format(self.__config.test_labels_from - 1, self.__config.train_labels_to))
+
+            max_submited_append_date = self.submitted_append_min_date
+            if self.submitted_append_min_date_rel is not None:
+                subappend_date_absolute = self.__config.train_labels_to - self.submitted_append_min_date_rel
+                max_submited_append_date = max(max_submited_append_date, subappend_date_absolute)
+
+            print("MAX", str(max_submited_append_date), str(subappend_date_absolute),
+                  str(self.__config.train_labels_from - 1))
+
 
             df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.train_labels_from - 1,
                                                                     dfs=self.dfs_train, min_date=0)
@@ -578,7 +584,7 @@ class FeatureExtractionOulad(FeatureExtraction):
             print("Len submitted: {} after: {}".format(len(df_vle_submitted_train), len(df_stud_vle_train)))
             print("counts before: {}".format(df_train_labels.groupby('submitted').size()))
 
-            df_filtered = self.__filter_submitted_until_date(min_date - 1,
+            df_filtered = self.__filter_submitted_until_date(max_submited_append_date - 1,
                                                              df_students=self.retrieve_filtered_students(
                                                                  self.dfs_train),
                                                              dfs=self.dfs_train)
