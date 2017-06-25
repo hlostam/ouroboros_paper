@@ -242,6 +242,17 @@ class Learner:
         # # cond = (y_prob_train >= (max_thr - 0.05) ) & (y_prob_train < (max_thr + 0.05)) & (y_train > 0)
         # cond = (y_prob_train <= (max_thr+0.02)) & (y_train > 0)
 
+        y_prob_train_0 = y_prob_train[y_train < 1]
+        median_train_0 = np.median(y_prob_train_0)
+        logging.debug("min:{} 25pct:{} Median:{} 75pct:{} max:{}".format(
+            np.min(y_prob_train_0),
+            np.percentile(y_prob_train_0, 25),
+            median_train_0,
+            np.percentile(y_prob_train_0, 75),
+            np.max(y_prob_train_0)))
+        cond_median = (y_prob_train <= np.percentile(y_prob_train_0, 99)) & (y_train > 0)
+
+        # Proportional strategy
         mask_array = np.zeros(len(y_prob_train), dtype=bool)
         num_to_del = len(y_train[y_train > 0]) - len(y_train[y_train < 1])
         # num_to_del = 1300
@@ -252,8 +263,11 @@ class Learner:
 
         # ind = y_prob_train.argsort()[y_train > 0][:num_to_del]
         mask_array[ind] = True
-        cond = mask_array & (y_train > 0)
+        cond_top_n = mask_array & (y_train > 0)
 
+        logging.debug("[bef]Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
+
+        cond = cond_median
         indices_to_remain = np.where(~cond)
         x_train = x_train[indices_to_remain]
         y_train = y_train[indices_to_remain]
@@ -316,9 +330,10 @@ class Learner:
             is_p_ok = False
             if hasattr(clf, 'predict_proba'):
                 p = clf.predict_proba(self.x_test)
-                y_prob_train = clf.predict_proba(self.x_train)[:,1]
+                p_train = clf.predict_proba(self.x_train)
                 try:
                     y_prob = p[:, 1]
+                    y_prob_train = p_train[:, 1]
                     is_p_ok = True
                 except IndexError:
                     print("no positive class in predicted data")
@@ -329,14 +344,14 @@ class Learner:
             # plt.hist(y_prob_train, bins='auto')
 
             # fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
-            # logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
+            # logging.debug("AUC-ROC[before]:" + str(metrics.auc(fpr, tpr)))
             # x_train = np.array(self.x_train)
             # y_train = np.array(self.y_train)
-
+            #
             # self.show_hist(y_train, y_prob_train)
-
-            # for _ in range(100):
-            # x_train, y_train, clf = self.do_magic(x_train, y_train, self.x_test, self.y_test, clf)
+            #
+            # for _ in range(25):
+            #     x_train, y_train, clf = self.do_magic(x_train, y_train, self.x_test, self.y_test, clf)
 
             if is_p_ok:
                 self.all_p[:, current_index] = y_prob
