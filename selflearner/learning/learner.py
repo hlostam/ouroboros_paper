@@ -35,7 +35,8 @@ def roam_average_precision(y_true, y_score, sample_weight=None):
 class Learner:
     def __init__(self, train_data, test_data, label, problem_definition: ProblemDefinition, sampler=None,
                  classifiers=None, feature_extractors=None, topk_prec_list=None, optimise_threshold=True,
-                 plot_pr_curve=False):
+                 plot_pr_curve=False,
+                 sample_and_retrain_enabled=False, sample_and_retrain_strategy='remove_pred_overlap'):
         if topk_prec_list is None:
             topk_prec_list = [5, 10, 20, 50, 75]
         if feature_extractors is None:
@@ -70,6 +71,8 @@ class Learner:
         self.features = {}
         for clf_name in self.names:
             self.features[clf_name] = []
+        self.sample_and_retrain_enabled = sample_and_retrain_enabled
+        self.sample_and_retrain_strategy = sample_and_retrain_strategy
 
     def _init_classifiers(self, classifiers):
         if classifiers is None:
@@ -171,8 +174,8 @@ class Learner:
         self.x_test = np.hstack((x_num_test, vec_x_cat_test))
 
         # HACK: This should be treated in a better way!!!!
-        self.y_train = 1. - self.train_data[self.label]
-        self.y_test = 1. - self.test_data[self.label]
+        self.y_train = np.array(1. - self.train_data[self.label])
+        self.y_test = np.array(1. - self.test_data[self.label])
 
         logging.info('Train 0: %s', len(np.where(self.y_train < 1)[0]))
         logging.info('Train 1: %s', len(np.where(self.y_train > 0)[0]))
@@ -231,43 +234,46 @@ class Learner:
         ax.hist(y_prob[y_train < 1], bins=20)
         fig.show()
 
-    def do_magic(self, x_train, y_train, x_test, y_test, old_model):
+
+    def do_magic(self, x_train, y_train, x_test, y_test, old_model, strategy='remove_pred_overlap', thresh='auto'):
         y_prob_train = old_model.predict_proba(x_train)[:, 1]
-        prec, rec, thresh = precision_recall_curve(y_train, y_prob_train)
-        # # max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(
-        # #     y_prob_train,
-        # #     y_train,
-        # #     thresh)
-        # logging.debug("Max thr: {}".format(max_thr) )
-        # # cond = (y_prob_train >= (max_thr - 0.05) ) & (y_prob_train < (max_thr + 0.05)) & (y_train > 0)
-        # cond = (y_prob_train <= (max_thr+0.02)) & (y_train > 0)
 
-        y_prob_train_0 = y_prob_train[y_train < 1]
-        median_train_0 = np.median(y_prob_train_0)
-        logging.debug("min:{} 25pct:{} Median:{} 75pct:{} max:{}".format(
-            np.min(y_prob_train_0),
-            np.percentile(y_prob_train_0, 25),
-            median_train_0,
-            np.percentile(y_prob_train_0, 75),
-            np.max(y_prob_train_0)))
-        cond_median = (y_prob_train <= np.percentile(y_prob_train_0, 99)) & (y_train > 0)
+        if strategy == 'remove_class_overlap':
+            y_prob_train_0 = y_prob_train[y_train < 1]
+            median_train_0 = np.median(y_prob_train_0)
+            logging.debug("min:{} 25pct:{} Median:{} 75pct:{} max:{}".format(
+                np.min(y_prob_train_0),
+                np.percentile(y_prob_train_0, 25),
+                median_train_0,
+                np.percentile(y_prob_train_0, 75),
+                np.max(y_prob_train_0)))
+            cond = (y_prob_train <= np.percentile(y_prob_train_0, 99)) & (y_train > 0)
+        elif strategy == 'equal_class_num':
+            # Proportional strategy
+            mask_array = np.zeros(len(y_prob_train), dtype=bool)
+            num_to_del = len(y_train[y_train > 0]) - len(y_train[y_train < 1])
+            # num_to_del = 1300
+            ind_sorted = y_prob_train.argsort()
+            ind_to_keep = np.where(y_train > 0)[0]
+            ind = np.array([x for x in ind_sorted if x in ind_to_keep])
+            ind = ind[:num_to_del]
 
-        # Proportional strategy
-        mask_array = np.zeros(len(y_prob_train), dtype=bool)
-        num_to_del = len(y_train[y_train > 0]) - len(y_train[y_train < 1])
-        # num_to_del = 1300
-        ind_sorted = y_prob_train.argsort()
-        ind_to_keep = np.where(y_train > 0)[0]
-        ind = np.array([x for x in ind_sorted if x in ind_to_keep])
-        ind = ind[:num_to_del]
+            # ind = y_prob_train.argsort()[y_train > 0][:num_to_del]
+            mask_array[ind] = True
+            cond = mask_array & (y_train > 0)
+        elif strategy == 'remove_until_thr':
+            if thresh == 'auto':
+                prec, rec, t = precision_recall_curve(y_train, y_prob_train)
 
-        # ind = y_prob_train.argsort()[y_train > 0][:num_to_del]
-        mask_array[ind] = True
-        cond_top_n = mask_array & (y_train > 0)
+                thresh, _, _, _, _= self.find_best_threshold( y_prob_train, y_train, t)
+                logging.debug("Max thr: {}".format(thresh) )
+                thresh = thresh + 0.02
+                # cond = (y_prob_train >= (max_thr - 0.05) ) & (y_prob_train < (max_thr + 0.05)) & (y_train > 0)
+            cond = (y_prob_train <= (thresh)) & (y_train > 0)
+                # cond = (y_prob_train <= thresh & (y_train > 0)
 
         logging.debug("[bef]Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
 
-        cond = cond_median
         indices_to_remain = np.where(~cond)
         x_train = x_train[indices_to_remain]
         y_train = y_train[indices_to_remain]
@@ -285,6 +291,37 @@ class Learner:
         logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
 
         return x_train, y_train, old_model
+
+    def sample_and_retrain(self, clf, max_iter=25, show_plots=False):
+        logging.debug("Sample and retraining post-process")
+
+        p_train = clf.predict_proba(self.x_train)
+        p = clf.predict_proba(self.x_test)
+        x_train = np.array(self.x_train)
+        y_train = np.array(self.y_train)
+
+        try:
+            y_prob = p[:, 1]
+
+            fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
+            logging.debug("AUC-ROC[before]:" + str(metrics.auc(fpr, tpr)))
+
+            if show_plots:
+                y_prob_train = p_train[:, 1]
+                self.show_hist(y_train, y_prob_train)
+
+            len_train = len_train_new = len(self.y_train)
+            for _ in range(max_iter):
+                # no change -> stop for_loop
+                if len_train_new == len_train:
+                    break
+                len_train = len_train_new
+                x_train, y_train, clf = self.do_magic(x_train, y_train, self.x_test, self.y_test, clf, strategy='equal_class_num')
+                len_train_new = len(y_train)
+        except IndexError:
+            logging.warning("no positive class in predicted data")
+
+        return clf, x_train, y_train
 
     def train_inner(self):
         """
@@ -330,28 +367,15 @@ class Learner:
             is_p_ok = False
             if hasattr(clf, 'predict_proba'):
                 p = clf.predict_proba(self.x_test)
-                p_train = clf.predict_proba(self.x_train)
+                if self.sample_and_retrain_enabled:
+                    clf, x_train, y_train = self.sample_and_retrain(clf, max_iter=300)
+
                 try:
                     y_prob = p[:, 1]
-                    y_prob_train = p_train[:, 1]
                     is_p_ok = True
                 except IndexError:
                     print("no positive class in predicted data")
                     is_p_ok = False
-
-            # plt.hist(y_prob, bins='auto')
-            # plt.show()
-            # plt.hist(y_prob_train, bins='auto')
-
-            # fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
-            # logging.debug("AUC-ROC[before]:" + str(metrics.auc(fpr, tpr)))
-            # x_train = np.array(self.x_train)
-            # y_train = np.array(self.y_train)
-            #
-            # self.show_hist(y_train, y_prob_train)
-            #
-            # for _ in range(25):
-            #     x_train, y_train, clf = self.do_magic(x_train, y_train, self.x_test, self.y_test, clf)
 
             if is_p_ok:
                 self.all_p[:, current_index] = y_prob
