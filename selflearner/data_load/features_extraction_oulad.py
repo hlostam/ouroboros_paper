@@ -345,12 +345,18 @@ class FeatureExtractionOulad(FeatureExtraction):
         else:
             Hdf5Creator().create_hdf5()
 
-    def retrieve_filtered_students(self, dfs):
+    def retrieve_filtered_students(self, dfs, exclude_extended=False):
         df_studinfo = dfs[DS_STUD_INFO]
 
         # Filter banked students
         df_ass = dfs[DS_STUD_ASSESSMENTS]
-        df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0) & (df_ass['date_submitted'] <= 32)]
+
+        if exclude_extended:
+            logging.info("Excluding extended students from the data")
+            cutoff_test_data = self.__config.cutoff_date_test
+            df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0) & (df_ass['date_submitted'] <= cutoff_test_data)]
+        else:
+            df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0)]
 
         self.logger.debug("All students: %s Not banked: %s", str(len(df_ass)), str(len(df_ass_not_banked)))
         df = pd.merge(df_studinfo, df_ass_not_banked, how='left', on='id_student')
@@ -370,7 +376,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
 
-    def __filter_unregistered_indate(self, date, df_students=None, dfs=None):
+    def __filter_unregister__filter_unregistered_indateed_indate(self, date, df_students=None, dfs=None):
         if df_students is None:
             df_students = dfs[DS_STUD_INFO]
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
@@ -515,7 +521,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered_students_test = self.__retrieve_registered_by_date(filter_date,
                                                                        df_students=df_filtered_students_test,
                                                                        dfs=self.dfs_test)
-
+        print("sel_stud",df_filtered_students_test[df_filtered_students_test.id_student == 43564])
         print("Train: {}".format(str(len(df_filtered_students_train))))
 
         # Filter by assessment submission
@@ -573,8 +579,8 @@ class FeatureExtractionOulad(FeatureExtraction):
                 subappend_date_absolute = self.__config.train_labels_to - self.submitted_append_min_date_rel
                 max_submited_append_date = max(max_submited_append_date, subappend_date_absolute)
 
-            print("MAX", str(max_submited_append_date), str(subappend_date_absolute),
-                  str(self.__config.train_labels_from - 1))
+                print("MAX", str(max_submited_append_date), str(subappend_date_absolute),
+                      str(self.__config.train_labels_from - 1))
 
 
             df_vle_submitted_train = self.__get_submitted_and_remap(self.__config.train_labels_from - 1,

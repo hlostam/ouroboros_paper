@@ -15,6 +15,7 @@ from sklearn import metrics
 from sklearn.svm import SVC
 from sklearn import linear_model as LR
 from sklearn import preprocessing
+import math
 
 from .evaluation_util import top_k_precision
 from .evaluation_util import top_k_recall
@@ -36,7 +37,7 @@ class Learner:
     def __init__(self, train_data, test_data, label, problem_definition: ProblemDefinition, sampler=None,
                  classifiers=None, feature_extractors=None, topk_prec_list=None, optimise_threshold=True,
                  plot_pr_curve=False,
-                 sample_and_retrain_enabled=False, sample_and_retrain_strategy='remove_pred_overlap'):
+                 sample_and_retrain_enabled=False, sample_and_retrain_strategy='remove_class_overlap'):
         if topk_prec_list is None:
             topk_prec_list = [5, 10, 20, 50, 75]
         if feature_extractors is None:
@@ -196,6 +197,7 @@ class Learner:
         self.classifiers = classifiers
         self.names = [name for clf, name in self.classifiers]
 
+
     def get_metrics_for_thr(self, y_prob, y_actual, thr):
         pred = [1. if v > thr else 0. for v in y_prob]
         f_score = f1_score(y_actual, pred)
@@ -227,6 +229,24 @@ class Learner:
 
         return max_thr, max_fscore, max_prec, max_recall, max_conf_matrix
 
+    def find_threshold_fpr(self, y_prob, y_actual, thresholds, fnr_req):
+        """
+        Finds the best threshold according  to maximal F-Measure.
+
+        :param thresholds:
+        :param y_prob:
+        :param y_actual:
+        :return:
+        """
+
+        for t in thresholds:
+            fs, pr, rec, cm = self.get_metrics_for_thr(y_prob, y_actual, t)
+            tnr = 1 - rec
+            if tnr < fnr_req:
+                return t
+        logging.debug("not satisfied")
+        return t
+
     def show_hist(self, y_train, y_prob):
         # y_prob_train = old_model.predict_proba(x_train)[:, 1]
         fig, ax = plt.subplots()
@@ -234,9 +254,18 @@ class Learner:
         ax.hist(y_prob[y_train < 1], bins=20)
         fig.show()
 
+    # TODO: It's the opposite ratio, needs to be fixed.
+    def get_class_counts(self):
+        class_counts_train = {'0': len(np.where(self.y_train > 0)[0]),
+                              '1': len(np.where(self.y_train < 1)[0])}
+        class_counts_test = {'0': len(np.where(self.y_test > 0)[0]),
+                             '1': len(np.where(self.y_test < 1)[0])}
 
-    def do_magic(self, x_train, y_train, x_test, y_test, old_model, strategy='remove_pred_overlap', thresh='auto'):
-        y_prob_train = old_model.predict_proba(x_train)[:, 1]
+        return class_counts_train, class_counts_test
+
+    def do_magic(self, x_train, y_train, x_test, y_test, clf, strategy='remove_class_overlap', thresh='auto'):
+        logging.debug("[Sample] one step start")
+        y_prob_train = clf.predict_proba(x_train)[:, 1]
 
         if strategy == 'remove_class_overlap':
             y_prob_train_0 = y_prob_train[y_train < 1]
@@ -271,28 +300,40 @@ class Learner:
                 # cond = (y_prob_train >= (max_thr - 0.05) ) & (y_prob_train < (max_thr + 0.05)) & (y_train > 0)
             cond = (y_prob_train <= (thresh)) & (y_train > 0)
                 # cond = (y_prob_train <= thresh & (y_train > 0)
+        elif strategy == 'super_duper':
+            class_ratio = (len(y_train[y_train > 0]) * 1.) / len(y_train[y_train < 1])
+            sqrt_ratio = math.sqrt(class_ratio)
+            # cut until the FPR is sqrt_ratio
+            prec, rec, t = precision_recall_curve(y_train, y_prob_train)
+            thresh = self.find_threshold_fpr(y_prob_train, y_train, t, sqrt_ratio)
+            logging.debug("Max thr: {}".format(thresh))
+            thresh = thresh + 0.02
+            cond = (y_prob_train <= (thresh)) & (y_train > 0)
+
 
         logging.debug("[bef]Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
 
         indices_to_remain = np.where(~cond)
         x_train = x_train[indices_to_remain]
         y_train = y_train[indices_to_remain]
-        old_model.fit(x_train, y_train)
+        clf.fit(x_train, y_train)
         logging.debug("Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
 
-        y_prob_train = old_model.predict_proba(x_train)[:, 1]
+        y_prob_train = clf.predict_proba(x_train)[:, 1]
         # plt.hist(y_prob_train, bins='auto')
-        y_prob = old_model.predict_proba(x_test)[:, 1]
+        y_prob = clf.predict_proba(x_test)[:, 1]
         # plt.hist(y_prob, bins='auto')
         # plt.show()
         # self.show_hist(y_train, y_prob_train)
 
         fpr, tpr, thresholds = metrics.roc_curve(y_test, y_prob)
+        fpr_tr, tpr_tr, thresholds_tr = metrics.roc_curve(y_test, y_prob)
+
         logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
 
-        return x_train, y_train, old_model
+        return x_train, y_train, clf, metrics.auc(fpr_tr, tpr_tr)
 
-    def sample_and_retrain(self, clf, max_iter=25, show_plots=False):
+    def sample_and_retrain(self, clf, max_iter=25, show_plots=False, return_best_result=True):
         logging.debug("Sample and retraining post-process")
 
         p_train = clf.predict_proba(self.x_train)
@@ -302,7 +343,6 @@ class Learner:
 
         try:
             y_prob = p[:, 1]
-
             fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
             logging.debug("AUC-ROC[before]:" + str(metrics.auc(fpr, tpr)))
 
@@ -310,16 +350,36 @@ class Learner:
                 y_prob_train = p_train[:, 1]
                 self.show_hist(y_train, y_prob_train)
 
-            len_train = len_train_new = len(self.y_train)
+            len_train_new = len(self.y_train)
+            len_train = np.inf
+
+            best_auc = 0
+            x_train_best = x_train
+            y_train_best = y_train
             for _ in range(max_iter):
                 # no change -> stop for_loop
                 if len_train_new == len_train:
+                    logging.debug("[Sample] Stopping loop")
                     break
                 len_train = len_train_new
-                x_train, y_train, clf = self.do_magic(x_train, y_train, self.x_test, self.y_test, clf, strategy='equal_class_num')
+                x_train, y_train, clf, auc_tr = self.do_magic(x_train, y_train, self.x_test, self.y_test,
+                                                clf,
+                                                strategy=self.sample_and_retrain_strategy)
+                if auc_tr > best_auc:
+                    x_train_best = x_train
+                    y_train_best = y_train
+                    best_auc = auc_tr
+
+                # Possible a greedy strategy:
+
                 len_train_new = len(y_train)
         except IndexError:
             logging.warning("no positive class in predicted data")
+
+        # Detect if to use the last result or the best one that was achieved.
+        if return_best_result is True:
+            x_train = x_train_best
+            y_train = y_train_best
 
         return clf, x_train, y_train
 
@@ -366,10 +426,17 @@ class Learner:
 
             is_p_ok = False
             if hasattr(clf, 'predict_proba'):
-                p = clf.predict_proba(self.x_test)
-                if self.sample_and_retrain_enabled:
-                    clf, x_train, y_train = self.sample_and_retrain(clf, max_iter=300)
+                self.sample_and_retrain_strategy = 'equal_class_num'
+                self.sample_and_retrain_strategy = 'remove_class_overlap'
+                self.sample_and_retrain_strategy = 'remove_until_thr'
+                self.sample_and_retrain_strategy = 'super_duper'
 
+                self.sample_and_retrain_enabled = True
+                if self.sample_and_retrain_enabled:
+                    logging.info("Sampling strategy:{}".format(self.sample_and_retrain_strategy))
+                    clf, self.x_train, self.y_train = self.sample_and_retrain(clf, max_iter=10)
+
+                p = clf.predict_proba(self.x_test)
                 try:
                     y_prob = p[:, 1]
                     is_p_ok = True
