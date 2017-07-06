@@ -426,12 +426,12 @@ class Learner:
 
             is_p_ok = False
             if hasattr(clf, 'predict_proba'):
-                self.sample_and_retrain_strategy = 'equal_class_num'
-                self.sample_and_retrain_strategy = 'remove_class_overlap'
-                self.sample_and_retrain_strategy = 'remove_until_thr'
-                self.sample_and_retrain_strategy = 'super_duper'
+                # self.sample_and_retrain_strategy = 'equal_class_num'
+                # self.sample_and_retrain_strategy = 'remove_class_overlap'
+                # self.sample_and_retrain_strategy = 'remove_until_thr'
+                # self.sample_and_retrain_strategy = 'super_duper'
 
-                self.sample_and_retrain_enabled = True
+                # self.sample_and_retrain_enabled = True
                 if self.sample_and_retrain_enabled:
                     logging.info("Sampling strategy:{}".format(self.sample_and_retrain_strategy))
                     clf, self.x_train, self.y_train = self.sample_and_retrain(clf, max_iter=10)
