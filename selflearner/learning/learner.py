@@ -16,6 +16,7 @@ from sklearn.svm import SVC
 from sklearn import linear_model as LR
 from sklearn import preprocessing
 import math
+import concurrent.futures
 
 from .evaluation_util import top_k_precision
 from .evaluation_util import top_k_recall
@@ -42,13 +43,14 @@ class Learner:
             topk_prec_list = [5, 10, 20, 50, 75]
         if feature_extractors is None:
             feature_extractors = []
-        self.auc = []
-        self.fscore = []
-        self.prec = []
+        size = len(classifiers)
+        self.auc = [None] * size
+        self.fscore = [None] * size
+        self.prec = [None] * size
         # self.top_k_prec = []
-        self.recall = []
-        self.pr_auc = []
-        self.pr_auc_linear = []
+        self.recall = [None] * size
+        self.pr_auc = [None] * size
+        self.pr_auc_linear = [None] * size
         # self.coef_lr = None
         # self.coef_svc = None
 
@@ -67,11 +69,11 @@ class Learner:
         self.top_k_prec = {}
         self.top_k_rec = {}
         for k in self.topkpreclist:
-            self.top_k_prec[k] = []
-            self.top_k_rec[k] = []
+            self.top_k_prec[k] = [None] * size
+            self.top_k_rec[k] = [None] * size
         self.features = {}
         for clf_name in self.names:
-            self.features[clf_name] = []
+            self.features[clf_name] = [None] * size
         self.sample_and_retrain_enabled = sample_and_retrain_enabled
         self.sample_and_retrain_strategy = sample_and_retrain_strategy
 
@@ -106,6 +108,7 @@ class Learner:
             ]
         self.classifiers = classifiers
         self.names = [name for clf, name in self.classifiers]
+        self.clf_name_ind =  { n:i for i,n in enumerate(self.names)}
 
     def preprocess(self):
         logging.debug("Pre-processing data...")
@@ -383,14 +386,152 @@ class Learner:
 
         return clf, x_train, y_train
 
+    def train_one_classifier(self, clf_pair):
+        clf = clf_pair[0]
+        clf_name = clf_pair[1]
+
+        logging.debug("Training " + clf_name)
+        pr_auc_list = []
+
+        if hasattr(clf, 'never_logged_column_name'):
+            try:
+                clf.never_logged_column_index = np.where(self.col_names == clf.never_logged_column_name)[0][0]
+            except IndexError:
+                raise AttributeError("VLE statistics are needed if BaseLine[Active] classifier is used")
+
+        if type(clf).__name__ == "OneClassSVM":
+            print("OneClassSVM train")
+            x_train = self.x_train[self.y_train < 1]
+            clf.fit(x_train)
+        else:
+            try:
+                clf.fit(self.x_train, self.y_train)
+            except ValueError:
+                print("Classifier hasn't been trained, only negative class was provided.")
+                clf = DummyClassifier(strategy="constant", constant=1)
+                clf.fit(self.x_train, self.y_train)
+        result_one = {}
+
+        is_p_ok = False
+        x_train = self.x_train
+        y_train = self.y_train
+        if hasattr(clf, 'predict_proba'):
+            self.sample_and_retrain_strategy = 'equal_class_num'
+            # self.sample_and_retrain_strategy = 'remove_class_overlap'
+            # self.sample_and_retrain_strategy = 'remove_until_thr'
+            # self.sample_and_retrain_strategy = 'super_duper'
+
+            # self.sample_and_retrain_enabled = True
+            if self.sample_and_retrain_enabled:
+                logging.info("Sampling strategy:{}".format(self.sample_and_retrain_strategy))
+                clf, x_train, y_train = self.sample_and_retrain(clf, max_iter=10)
+
+            p = clf.predict_proba(self.x_test)
+            try:
+                y_prob = p[:, 1]
+                is_p_ok = True
+            except IndexError:
+                print("no positive class in predicted data")
+                is_p_ok = False
+
+        if is_p_ok:
+            prec, rec, thresh = precision_recall_curve(self.y_test, y_prob)
+
+            # reset for the Base classifiers / don't allow spurious results
+            pred = clf.predict(self.x_test)
+            max_fscore = f1_score(self.y_test, pred)
+            max_prec = precision_score(self.y_test, pred)
+            max_recall = recall_score(self.y_test, pred)
+            # max_conf_matrix = confusion_matrix(self.y_test, pred)
+
+            # find max threshold if not BaseLine model
+            y_proba_for_opt = clf.predict_proba(x_train)
+            y_proba_for_opt = y_proba_for_opt[:, 1]
+            y_actual_for_opt = y_train
+            if self.optimise_threshold is True:
+                if not clf_name.startswith('Base['):
+                    max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(
+                        y_proba_for_opt,
+                        y_actual_for_opt,
+                        thresh)
+                    max_fscore, max_prec, max_recall, max_conf_matrix = self.get_metrics_for_thr(y_prob,
+                                                                                                 self.y_test,
+                                                                                                 max_thr)
+                    logging.debug("Max Thr: {} F1:{}".format(max_thr, max_fscore))
+
+            top_k = 5
+            top_k_prec_d = {}
+            top_k_rec_d = {}
+            for k in self.topkpreclist:
+                top_k_prec = top_k_precision(self.y_test, y_prob, k)
+                top_k_prec_d[k] = top_k_prec
+                top_k_rec = top_k_recall(self.y_test, y_prob, k)
+                top_k_rec_d[k] = top_k_rec
+
+            pr_auc_linear = average_precision_score(self.y_test, y_prob)
+            pr_auc = roam_average_precision(self.y_test, y_prob)
+
+            result_one['fscore'] = max_fscore
+            result_one['prec'] = max_prec
+            result_one['recall'] = max_recall
+            result_one['pr_auc'] = pr_auc
+            result_one['pr_auc_linear'] = pr_auc_linear
+
+            # cm = confusion_matrix(self.y_test, predictions)
+            # print(cm)
+
+            fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
+            logging.debug(clf_name + ":AUC-ROC:" + str(metrics.auc(fpr, tpr)))
+            logging.debug(clf_name + ":AUC-PR:" + str(pr_auc))
+            logging.debug(clf_name + ":Precision:" + str(max_prec))
+            logging.debug(clf_name + ":Precision-TOP5:" + str(top_k_prec_d[top_k]))
+            logging.debug(clf_name + ":Recall-TOP5:" + str(top_k_rec_d[top_k]))
+            logging.debug(clf_name + ":Recall:" + str(max_recall))
+            # logging.debug("Conf. matrix:\n" + str(max_conf_matrix))
+            auc = metrics.auc(fpr, tpr)
+            result_one['auc'] = auc
+
+        else:
+            predictions = clf.predict(self.x_test)
+            if type(clf).__name__ == "OneClassSVM":
+                predictions = [1 if x < 0 else 0 for x in predictions]
+
+            f_score = f1_score(self.y_test, predictions)
+            logging.info(clf_name + ":Original Fscore: {}".format(f_score))
+            prec_local = precision_score(self.y_test, predictions)
+            rec_local = recall_score(self.y_test, predictions)
+
+            result_one['fscore'] = f_score
+            result_one['prec'] = prec_local
+            result_one['recall'] = rec_local
+            result_one['pr_auc'] = 0
+            result_one['pr_auc_linear'] = 0
+            result_one['auc'] = 0
+
+        if hasattr(clf, 'best_params_'):
+            print('Best params on train data')
+            print(clf.best_params_)
+            print("Grid scores on development set:")
+            for params, mean_score, scores in clf.grid_scores_:
+                print("%0.3f (+/-%0.03f) for %r" % (mean_score, scores.std() * 2, params))
+
+        result_one['features'] = self.get_model_features(clf)
+        result_one['y_prob'] = y_prob
+        result_one['pr_auc_list'] = pr_auc_list
+        result_one['top_k_rec_d'] = top_k_rec_d
+        result_one['top_k_prec_d'] = top_k_prec_d
+
+        return result_one
+
     def train_inner(self):
         """
         Trains all the classifiers in self.classifiers.
         :return:
         """
-        self.all_p = np.zeros((len(self.y_test), len(self.classifiers)), dtype=np.float64)
+        import pandas as pd
+        self.all_p = pd.DataFrame()
 
-        current_index = 0
+        # current_index = 0
         pr_auc_list = {}
 
         # Feature extraction
@@ -402,128 +543,28 @@ class Learner:
         # Sampling
         self.handle_sampling()
 
-        for clf, clf_name in self.classifiers:
-            logging.debug("Training " + clf_name)
-            pr_auc_list[clf_name] = []
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            for (clf, clf_name), res in zip(self.classifiers, executor.map(self.train_one_classifier, self.classifiers)):
+                index = self.clf_name_ind[clf_name]
+                logging.debug('Clf:{} Index:{}'.format(clf_name, index))
+                pr_auc_list[clf_name] = res['pr_auc_list']
+                self.all_p[clf_name] = res['y_prob']
 
-            if hasattr(clf, 'never_logged_column_name'):
-                try:
-                    clf.never_logged_column_index = np.where(self.col_names == clf.never_logged_column_name)[0][0]
-                except IndexError:
-                    raise AttributeError("VLE statistics are needed if BaseLine[Active] classifier is used")
+                attrs = ['auc', 'pr_auc', 'pr_auc_linear', 'fscore', 'recall', 'prec', 'features']
+                for att_name in attrs:
+                    att = getattr(self, att_name)
+                    att[index] = res[att_name]
+                # self.auc[index] = res['auc']
+                # self.pr_auc[index] = res['pr_auc']
+                # self.pr_auc_linear[index] = res['pr_auc_linear']
+                # self.fscore[index] = res['fscore']
+                # self.recall[index] = res['recall']
+                # self.prec[index] = res['prec']
+                # self.features[clf_name] = res['features']
 
-            if type(clf).__name__ == "OneClassSVM":
-                print("OneClassSVM train")
-                x_train = self.x_train[self.y_train < 1]
-                clf.fit(x_train)
-            else:
-                try:
-                    clf.fit(self.x_train, self.y_train)
-                except ValueError:
-                    print("Classifier hasn't been trained, only negative class was provided.")
-                    clf = DummyClassifier(strategy="constant", constant=1)
-                    clf.fit(self.x_train, self.y_train)
-
-            is_p_ok = False
-            if hasattr(clf, 'predict_proba'):
-                # self.sample_and_retrain_strategy = 'equal_class_num'
-                # self.sample_and_retrain_strategy = 'remove_class_overlap'
-                # self.sample_and_retrain_strategy = 'remove_until_thr'
-                # self.sample_and_retrain_strategy = 'super_duper'
-
-                # self.sample_and_retrain_enabled = True
-                if self.sample_and_retrain_enabled:
-                    logging.info("Sampling strategy:{}".format(self.sample_and_retrain_strategy))
-                    clf, self.x_train, self.y_train = self.sample_and_retrain(clf, max_iter=10)
-
-                p = clf.predict_proba(self.x_test)
-                try:
-                    y_prob = p[:, 1]
-                    is_p_ok = True
-                except IndexError:
-                    print("no positive class in predicted data")
-                    is_p_ok = False
-
-            if is_p_ok:
-                self.all_p[:, current_index] = y_prob
-                current_index += 1
-
-                prec, rec, thresh = precision_recall_curve(self.y_test, y_prob)
-                pr_auc_list[clf_name].append((rec, prec))
-
-                # reset for the Base classifiers / don't allow spurious results
-                pred = clf.predict(self.x_test)
-                max_fscore = f1_score(self.y_test, pred)
-                max_prec = precision_score(self.y_test, pred)
-                max_recall = recall_score(self.y_test, pred)
-                # max_conf_matrix = confusion_matrix(self.y_test, pred)
-
-                # find max threshold if not BaseLine model
-                y_proba_for_opt = clf.predict_proba(self.x_train)
-                y_proba_for_opt = y_proba_for_opt[:, 1]
-                y_actual_for_opt = self.y_train
-                if self.optimise_threshold is True:
-                    if not clf_name.startswith('Base['):
-                        max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(
-                            y_proba_for_opt,
-                            y_actual_for_opt,
-                            thresh)
-                        max_fscore, max_prec, max_recall, max_conf_matrix = self.get_metrics_for_thr(y_prob,
-                                                                                                     self.y_test,
-                                                                                                     max_thr)
-                        logging.debug("Max Thr: {} F1:{}".format(max_thr, max_fscore))
-
-                top_k = 5
                 for k in self.topkpreclist:
-                    logging.debug('Appending: {}'.format(str(k)))
-                    top_k_prec = top_k_precision(self.y_test, y_prob, k)
-                    self.top_k_prec[k].append(top_k_prec)
-                    top_k_rec = top_k_recall(self.y_test, y_prob, k)
-                    self.top_k_rec[k].append(top_k_rec)
-                # self.top_k_prec.append(self.top_k_precs[top_k])
-
-                self.fscore.append(max_fscore)
-                self.prec.append(max_prec)
-                self.recall.append(max_recall)
-                pr_auc_linear = average_precision_score(self.y_test, y_prob)
-                pr_auc = roam_average_precision(self.y_test, y_prob)
-
-                self.pr_auc.append(pr_auc)
-                self.pr_auc_linear.append(pr_auc_linear)
-                # cm = confusion_matrix(self.y_test, predictions)
-                # print(cm)
-
-                fpr, tpr, thresholds = metrics.roc_curve(self.y_test, y_prob)
-                logging.debug("AUC-ROC:" + str(metrics.auc(fpr, tpr)))
-                logging.debug("AUC-PR:" + str(pr_auc))
-                logging.debug("Precision:" + str(max_prec))
-                logging.debug("Precision-TOP5:" + str(self.top_k_prec[top_k]))
-                logging.debug("Recall-TOP5:" + str(self.top_k_rec[top_k]))
-                logging.debug("Recall:" + str(max_recall))
-                # logging.debug("Conf. matrix:\n" + str(max_conf_matrix))
-                self.auc.append(metrics.auc(fpr, tpr))
-            else:
-                predictions = clf.predict(self.x_test)
-                if type(clf).__name__ == "OneClassSVM":
-                    predictions = [1 if x < 0 else 0 for x in predictions]
-
-                f_score = f1_score(self.y_test, predictions)
-                logging.info("Original Fscore: {}".format(f_score))
-                self.fscore.append(f_score)
-                self.prec.append(precision_score(self.y_test, predictions))
-                self.recall.append(recall_score(self.y_test, predictions))
-                self.pr_auc.append(0)
-                self.pr_auc_linear.append(0)
-                self.auc.append(0)
-            if hasattr(clf, 'best_params_'):
-                print('Best params on train data')
-                print(clf.best_params_)
-                print("Grid scores on development set:")
-                for params, mean_score, scores in clf.grid_scores_:
-                    print("%0.3f (+/-%0.03f) for %r" % (mean_score, scores.std() * 2, params))
-
-            self.handle_model_features(clf, clf_name)
-            # file_prefix =  '_'.join([self.problem_definition.module, self.problem_definition.presentation, self.problem_definition.days_to_cutoff])
+                    self.top_k_rec[k][index] = res['top_k_rec_d'][k]
+                    self.top_k_prec[k][index] = res['top_k_prec_d'][k]
 
         file_prefix = "_".join([self.problem_definition.module, self.problem_definition.presentation,
                                 self.problem_definition.assessment_name, str(self.problem_definition.days_to_cutoff)
@@ -539,6 +580,15 @@ class Learner:
                 self.features[name] = clf.feature_importances_
         except ValueError:
             pass
+
+    def get_model_features(self, clf):
+        try:
+            if hasattr(clf, 'coef_'):
+                return clf.coef_.flatten()
+            elif hasattr(clf, 'feature_importances_'):
+                return clf.feature_importances_
+        except ValueError:
+            return None
 
     def train_all(self):
         """

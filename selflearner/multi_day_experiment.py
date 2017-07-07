@@ -4,13 +4,16 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from selflearner.data_load.features_extraction_oulad import FeatureExtractionOulad
+from selflearner.data_load.features_extraction_oulad import FeatureExtractionOulad, Hdf5Creator
 from selflearner.learning.learner import Learner
 from selflearner.plotting.plotting import plot_df
 from selflearner.problem_definition import ProblemDefinition, TrainingType
 from selflearner.module_first_submission import get_first_submission
+from selflearner.selflearner_utils import get_prev_pres_same
 import seaborn as sns
 from pandas.core.base import (GroupByError )
+from zodbpickle import pickle
+
 
 # TODO: Unified settings somewhere from global
 pd.set_option('display.max_columns', 0)  # Display any number of columns
@@ -104,8 +107,7 @@ class MultiDayExperiment:
         self.optimise_threshold = optimise_threshold
         self.metrics = metrics
         self.metrics_k = metrics_k
-        self.learner_names = []
-        self.learners = []
+        # self.learners = []
         self.feature_extractors = feature_extractors
         self.classifiers = classifiers
         if self.classifiers is not None:
@@ -117,13 +119,13 @@ class MultiDayExperiment:
 
     def metric_to_df(self, metric):
         df = pd.DataFrame(self.metrics[metric])
-        df.columns = self.learner_names
+        df.columns = self.classifiers_names
         df.index_name = 'Day'
         return df
 
     def metric_k_to_df(self, metric_k, k):
         df = pd.DataFrame(self.metrics_k[metric_k][k])
-        df.columns = self.learner_names
+        df.columns = self.classifiers_names
         df.index_name = 'Day'
         return df
 
@@ -133,7 +135,8 @@ class MultiDayExperiment:
         """
         for problem_def in self.problem_definitions:
            try:
-              self.perform_problem_def(problem_def)
+               experiment_result = self.perform_problem_def(problem_def)
+               self.experiment_results.append(experiment_result)
            except GroupByError as e:
               logging.error(
                 "Problem did not finish: {} {}, Day: {} Predicted day: {} LabelWindow: {} Exception: {}".format(problem_def.module, problem_def.presentation,
@@ -142,6 +145,7 @@ class MultiDayExperiment:
                                                                           problem_def.days_for_label_window,
                                                                           e)
               )
+
     def perform_problem_def(self, problem_def):
             logging.info(
                 "{} {}, Day: {} Predicted day: {} LabelWindow: {} MinSubmitRel: {}".format(problem_def.module, problem_def.presentation,
@@ -168,21 +172,21 @@ class MultiDayExperiment:
             experiment_result = ExperimentResult(problem_def)
             experiment_result.class_numbers_train = self._get_class_counts(train_data)
             experiment_result.class_numbers_test = self._get_class_counts(test_data)
-
-            # Learningq
-
+            learner = None
+            # Learning
             if self.classifiers is not None:
                 learner = Learner(train_data, test_data, self.label_name, problem_def, sampler=self.sampler,
                                   classifiers=self.classifiers, feature_extractors=self.feature_extractors,
                                   topk_prec_list=self.topkpreclist, optimise_threshold=self.optimise_threshold)
                 learner.run()
-                self.learners.append(learner)
-                self.learner_names = learner.names
+                # self.learners.append(learner)
                 learner_results = self.get_classifier_results(learner)
                 experiment_result.feature_names = learner.col_names
                 experiment_result.classifier_results = learner_results
+                # it might be resampled by the learner so it's important to run it again
+                experiment_result.class_numbers_train, experiment_result.class_numbers_test = learner.get_class_counts()
 
-            self.experiment_results.append(experiment_result)
+            return experiment_result
 
     def add_metrics(self, learner: Learner):
         # add the evaluation metrics
@@ -224,6 +228,7 @@ class MultiDayExperiment:
 
         for metric in self.metrics:
             classifier_metrics = getattr(learner, metric)
+            print('metrics',metric,classifier_metrics)
             for index, name in enumerate(classifier_names):
                 metric_value = classifier_metrics[index]
                 classifier_results[name].metrics[metric] = metric_value
@@ -431,30 +436,30 @@ class MultiDayExperiment:
     def filter_top_k_columns(self, df: pd.DataFrame, k, column_name):
         return df
 
-    def print_weights(self, feature_col_name='feature_name', top_k_features=10):
-        if len(self.feature_extractors) > 0:
-            return
-
-        learner_priorities = ['xgb', 'svc', 'lr', 'et', 'gbc']
-        day = 1
-        df_all_features = pd.DataFrame()
-        for learner in self.learners:
-            print("DAY: ", day)
-            day += 1
-            df_new_lr = self.get_coef_df(learner, feature_col_name=feature_col_name)
-            for learner_name in learner_priorities:
-                learner_coef = learner_name + '_coef'
-                if learner_coef in df_new_lr:
-                    print(df_new_lr.sort_values(by=[learner_coef], ascending=[True]))
-                    df_top = df_new_lr.sort_values(by=learner_coef, ascending=False).head(n=top_k_features)
-                    df_top = self.include_modpres_to_df(df_top)
-                    df_top['day'] = day
-                    print(df_top)
-                    df_all_features = pd.concat([df_all_features, df_top])
-                    print('all features')
-                    print(df_all_features)
-                break
-        return df_all_features
+    # def print_weights(self, feature_col_name='feature_name', top_k_features=10):
+    #     if len(self.feature_extractors) > 0:
+    #         return
+    #
+    #     learner_priorities = ['xgb', 'svc', 'lr', 'et', 'gbc']
+    #     day = 1
+    #     df_all_features = pd.DataFrame()
+    #     for learner in self.learners:
+    #         print("DAY: ", day)
+    #         day += 1
+    #         df_new_lr = self.get_coef_df(learner, feature_col_name=feature_col_name)
+    #         for learner_name in learner_priorities:
+    #             learner_coef = learner_name + '_coef'
+    #             if learner_coef in df_new_lr:
+    #                 print(df_new_lr.sort_values(by=[learner_coef], ascending=[True]))
+    #                 df_top = df_new_lr.sort_values(by=learner_coef, ascending=False).head(n=top_k_features)
+    #                 df_top = self.include_modpres_to_df(df_top)
+    #                 df_top['day'] = day
+    #                 print(df_top)
+    #                 df_all_features = pd.concat([df_all_features, df_top])
+    #                 print('all features')
+    #                 print(df_all_features)
+    #             break
+    #     return df_all_features
 
     def create_problem_definitions(self, module_presentations, assessment_name, min_days, max_days, label_name,
                                    grouping_column,
@@ -529,11 +534,47 @@ class MultiDayExperiment:
                             problem_definitions.append(problem_definition)
         return problem_definitions
 
+
+    def pickle_results(self, file_name='results'):
+        file_metrics = file_name + "_measures" + ".pkl"
+        file_counts = file_name + "_counts" + ".pkl"
+
+        with open(file_counts, "wb") as f:
+                pickle.dump(self.get_class_counts_df(relative_counts=False), f)
+        with open(file_metrics, "wb") as f:
+                pickle.dump(self.get_metrics_df(), f)
+        logging.info("Results of multi_day_experiment successfully pickled.")
+
+
+def reload_module_presentations(modules, presentations):
+    # ----------------------------------------------------------------------------------------------------------------------
+    # Load all the module and presentations
+    # ----------------------------------------------------------------------------------------------------------------------
+    manager = Hdf5Creator().get_hdf5_manager()
+    df_courses = manager.load_dataframe('courses').reset_index()
+    df_courses = df_courses.loc[
+        df_courses['code_module'].isin(modules) & df_courses['code_presentation'].isin(presentations)]
+    module_presentations = []
+    for index, row in df_courses.iterrows():
+        module, presentation = row['code_module'], row['code_presentation']
+        presentation_train = presentation
+        module_presentations.append((module, presentation, presentation_train))
+
+    module_presentations_previous = []
+    for index, row in df_courses.iterrows():
+        module, presentation = row['code_module'], row['code_presentation']
+        presentation_train = get_prev_pres_same(presentation)
+        module_presentations_previous.append((module, presentation, presentation_train))
+
+    return module_presentations, module_presentations_previous
+
+
 def main():
-    print("Beginning the experiment")
+    logging.info("Beginning the experiment")
     from sklearn.dummy import DummyClassifier
     from sklearn.ensemble import RandomForestClassifier
     classifiers = [
+        # (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5), "RF_2"),
         (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5), "RF"),
         # (DummyClassifier(strategy="constant", constant=1), "Base[NS]")
     ]
@@ -548,35 +589,43 @@ def main():
           , 'reg_statistics'
     ]
 
-    modules = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
-    # modules = ["EEE"]
-    presentations = ["2014J"]
+    # modules = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
+    # # modules = ["EEE"]
+    # presentations = ["2014J"]
 
+    modules = ["BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
+    # modules = ["CCC"]
+    presentations = ["2014J"]
+    module_presentations, module_presentations_previous = reload_module_presentations(modules, presentations)
+    # module_presentations = [("DDD", "2014J", "2014J")]
     md = MultiDayExperiment(
-            max_days=10,
-            min_days=10,
+            max_days='auto',
+            # min_days=0,
             max_days_to_predict=None,
-            include_submitted=True,
-            module_presentations=[
-                                  # ("DDD", "2014J", "2014J"),
-                                  ("CCC", "2014J", "2014J")
+            include_submitted=False,
+            module_presentations=
+            # module_presentations,
+            [
+                                  ("AAA", "2013J", "2013J"),
+            #                       ("DDD", "2014J", "2014J")
                                   ],
             assessment_name="TMA 1",
             classifiers=classifiers,
-            days_for_label_window=0,
+            # days_for_label_window=0,
             count_all_days_to_predict=False,
             count_all_days_for_label_window=False,
             features=features,
-            filter_only_registered=False,
+            filter_only_registered=True,
             # sampler=SMOTE(),
             training_type=TrainingType.SELFLEARNER,
             submitted_append_min_date=-10,
-            submitted_append_min_date_rel=10,
-            generate_all_append_min_dates=True
+            # submitted_append_min_date_rel=0,
+            # generate_all_append_min_dates=True
     )
     # 19-15
     md.perform_experiment()
     print(md.classifiers_names)
+    md.pickle_results(file_name='sample_super_duper_3')
 
 if __name__ == "__main__":
     main()

@@ -376,8 +376,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
         return df_filtered
 
-
-    def __filter_unregister__filter_unregistered_indateed_indate(self, date, df_students=None, dfs=None):
+    def __filter_unregistered_indate(self, date, df_students=None, dfs=None):
         if df_students is None:
             df_students = dfs[DS_STUD_INFO]
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
@@ -429,7 +428,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         self.logger.debug("Filtering by registration date -- not registered in the window will be filtered.")
         df_filtered = dfs[DS_STUD_REG].loc[(dfs[DS_STUD_REG]["date_unregistration"] > registration_date) | (
             dfs[DS_STUD_REG]["date_unregistration"].isnull())]
-        
+
         self.logger.debug("DF_reg before join: %s", str(len(df_filtered)))
         if df_students is not None:
             self.logger.debug("DF_STUDENTS before join: %s", str(len(df_students)))
