@@ -190,8 +190,8 @@ class Learner:
             print("Sampling:{}".format(type(self.sampler).__name__))
             try:
                 self.x_train, self.y_train = self.sampler.fit_sample(self.x_train, self.y_train)
-            except ValueError:
-                logging.error("Sampling couldnt be done")
+            except (ValueError, IndexError) as e:
+                logging.error("Sampling couldnt be done:{}".format(type(e)))
                 pass
 
     def set_classifiers(self, classifiers):
