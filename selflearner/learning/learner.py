@@ -141,7 +141,6 @@ class Learner:
         x_num_test = self.test_data.select_dtypes(include=['int64', 'float']).drop(drop_cols, axis=1).as_matrix()
         imp = Imputer(missing_values='NaN', strategy='mean', axis=0)
         x_num_train = imp.fit_transform(x_num_train)
-
         x_num_test = imp.fit_transform(x_num_test)
 
         # # scale to <0,1>
@@ -399,6 +398,13 @@ class Learner:
             except IndexError:
                 raise AttributeError("VLE statistics are needed if BaseLine[Active] classifier is used")
 
+        if hasattr(clf, 'last_login_column_name'):
+            try:
+                clf.last_login_column_index = np.where(self.col_names == clf.last_login_column_name)[0][0]
+            except IndexError:
+                print(clf.last_login_column_name, self.col_names)
+                raise AttributeError("VLE statistics are needed if BaseLine[DaysActive] classifier is used")
+
         if type(clf).__name__ == "OneClassSVM":
             print("OneClassSVM train")
             x_train = self.x_train[self.y_train < 1]
@@ -449,7 +455,8 @@ class Learner:
             y_proba_for_opt = y_proba_for_opt[:, 1]
             y_actual_for_opt = y_train
             if self.optimise_threshold is True:
-                if not clf_name.startswith('Base['):
+                # Int signalizes interpolation
+                if not clf_name.startswith('Base[') or 'Int' in clf_name:
                     max_thr, max_fscore, max_prec, max_recall, max_conf_matrix = self.find_best_threshold(
                         y_proba_for_opt,
                         y_actual_for_opt,

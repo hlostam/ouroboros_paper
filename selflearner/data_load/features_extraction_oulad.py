@@ -347,21 +347,25 @@ class FeatureExtractionOulad(FeatureExtraction):
 
     def retrieve_filtered_students(self, dfs, exclude_extended=False):
         df_studinfo = dfs[DS_STUD_INFO]
-
+        len_studinfo = len(df_studinfo)
         # Filter banked students
         df_ass = dfs[DS_STUD_ASSESSMENTS]
+
+        df = pd.merge(df_studinfo, df_ass, how='left', on='id_student')
+        # Removing assessmen banking
+        df = df[df.is_banked != 1]
+        self.logger.debug("All students: %s Not banked: %s", str(len(df_ass)), str(len(df)))
 
         if exclude_extended:
             logging.info("Excluding extended students from the data")
             cutoff_test_data = self.__config.cutoff_date_test
-            df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0) & (df_ass['date_submitted'] <= cutoff_test_data)]
-        else:
-            df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0)]
+            df = df[(df.date_submitted <= cutoff_test_data) | (df.date_submitted.isnull()) ]
+            # df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0) & (df_ass['date_submitted'] <= cutoff_test_data)]
+        # else:
+        #     df_ass_not_banked = df_ass.loc[(df_ass['is_banked'] == 0)]
 
-        self.logger.debug("All students: %s Not banked: %s", str(len(df_ass)), str(len(df_ass_not_banked)))
-        df = pd.merge(df_studinfo, df_ass_not_banked, how='left', on='id_student')
         df.fillna(SUBMIT_NEVER, inplace=True)
-        self.logger.debug("StudInfo Before merge: %s ... After merge: %s", str(len(df_studinfo)), str(len(df)))
+        self.logger.debug("StudInfo Before merge: {} ... After merge: {}".format(len_studinfo, len(df)))
         return df
 
     def __filter_submitted_until_date(self, date, df_students=None, dfs=None):
@@ -372,8 +376,11 @@ class FeatureExtractionOulad(FeatureExtraction):
         df_stud_ass = dfs[DS_STUD_ASSESSMENTS]
 
         arr_submitted = df_stud_ass.loc[df_stud_ass['date_submitted'] <= date]['id_student']
-        print("Removed:{}".format(len(arr_submitted)))
+        logging.debug("Submitted to be removed: {}".format(len(arr_submitted)))
+        logging.debug("Before submitted removal:{}".format(len(df_students)))
         df_filtered = df_students.loc[~df_students['id_student'].isin(arr_submitted)]
+        logging.debug("After submission removal: {}".format(len(df_filtered)))
+
         return df_filtered
 
     def __filter_unregistered_indate(self, date, df_students=None, dfs=None):
@@ -425,7 +432,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         :param df_students:
         :return:
         """
-        self.logger.debug("Filtering by registration date -- not registered in the window will be filtered.")
+        self.logger.debug("Filtering by registration date -- not registered in the window will be filtered, day:{}".format(registration_date))
         df_filtered = dfs[DS_STUD_REG].loc[(dfs[DS_STUD_REG]["date_unregistration"] > registration_date) | (
             dfs[DS_STUD_REG]["date_unregistration"].isnull())]
 
@@ -514,27 +521,32 @@ class FeatureExtractionOulad(FeatureExtraction):
     def extract_features(self, features):
         self.__load_config_and_datasets()
         self.logger.debug("Extracting  features")
+        self.logger.debug("Retrieving training data")
         df_filtered_students_train = self.retrieve_filtered_students(self.dfs_train)
+        self.logger.debug("Retrieving testing data")
         df_filtered_students_test = self.retrieve_filtered_students(self.dfs_test)
         filter_date = 0
         if self.problem_definition.filter_only_registered:
              filter_date = self.__config.test_labels_from
+        self.logger.debug('Filtering reg testing data')
         df_filtered_students_test = self.__retrieve_registered_by_date(filter_date,
                                                                        df_students=df_filtered_students_test,
                                                                        dfs=self.dfs_test)
-        print("Train: {}".format(str(len(df_filtered_students_train))))
+        print("Train: {}".format(len(df_filtered_students_train)))
 
         # Filter by assessment submission
+        self.logger.debug("Filtering by submission -- test")
         df_filtered_students_test = self.__filter_submitted_until_date(self.__config.test_labels_from - 1,
                                                                        df_filtered_students_test, dfs=self.dfs_test)
 
         # Maximum of both dates for taking students into consideration is taken
-
+        # if self.problem_definition.training_type == TrainingType.SELFLEARNER:
+        self.logger.debug("Filtering by submission -- train")
         df_filtered_students_train = self.__filter_submitted_until_date(self.__config.train_labels_from - 1,
                                                                         df_filtered_students_train, dfs=self.dfs_train)
 
-        print("Train: {}".format(str(len(df_filtered_students_train))))
-        print("Test: {}".format(str(len(df_filtered_students_test))))
+        self.logger.debug("[after subm filter] Train: {}".format(str(len(df_filtered_students_train))))
+        self.logger.debug("[after subm filter] Test: {}".format(str(len(df_filtered_students_test))))
 
         # 1. Labels
         df_train_labels = self.__retrieve_labels_submitted(df_filtered_students_train, self.__config.train_labels_to)
@@ -877,6 +889,8 @@ class FeatureExtractionOulad(FeatureExtraction):
 
         num_days_from_start = max_click_day - presentation_start_day + 1
         self.logger.debug("Num days: %s", num_days_from_vleopen)
+        # self.logger.debug("max_click_day: %s", max_click_day)
+        # self.logger.debug("min_click_day: %s", min_click_day)
 
         df_last_login = df_stud_vle_date_filter.groupby(['id_student']).agg(
             {'date': {'first_login': 'min', 'last_login': 'max'},
