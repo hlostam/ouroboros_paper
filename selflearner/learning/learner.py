@@ -497,6 +497,10 @@ class Learner:
             # logging.debug("Conf. matrix:\n" + str(max_conf_matrix))
             auc = metrics.auc(fpr, tpr)
             result_one['auc'] = auc
+            result_one['y_prob'] = y_prob
+            result_one['pr_auc_list'] = pr_auc_list
+            result_one['top_k_rec_d'] = top_k_rec_d
+            result_one['top_k_prec_d'] = top_k_prec_d
 
         else:
             predictions = clf.predict(self.x_test)
@@ -515,6 +519,11 @@ class Learner:
             result_one['pr_auc_linear'] = 0
             result_one['auc'] = 0
 
+            result_one['y_prob'] = None
+            result_one['pr_auc_list'] = None
+            result_one['top_k_rec_d'] = None
+            result_one['top_k_prec_d'] = None
+
         if hasattr(clf, 'best_params_'):
             print('Best params on train data')
             print(clf.best_params_)
@@ -523,10 +532,6 @@ class Learner:
                 print("%0.3f (+/-%0.03f) for %r" % (mean_score, scores.std() * 2, params))
 
         result_one['features'] = self.get_model_features(clf)
-        result_one['y_prob'] = y_prob
-        result_one['pr_auc_list'] = pr_auc_list
-        result_one['top_k_rec_d'] = top_k_rec_d
-        result_one['top_k_prec_d'] = top_k_prec_d
 
         return result_one
 
@@ -561,17 +566,11 @@ class Learner:
                 for att_name in attrs:
                     att = getattr(self, att_name)
                     att[index] = res[att_name]
-                # self.auc[index] = res['auc']
-                # self.pr_auc[index] = res['pr_auc']
-                # self.pr_auc_linear[index] = res['pr_auc_linear']
-                # self.fscore[index] = res['fscore']
-                # self.recall[index] = res['recall']
-                # self.prec[index] = res['prec']
-                # self.features[clf_name] = res['features']
 
-                for k in self.topkpreclist:
-                    self.top_k_rec[k][index] = res['top_k_rec_d'][k]
-                    self.top_k_prec[k][index] = res['top_k_prec_d'][k]
+                if 'top_k_rec_d' in res and res['top_k_rec_d'] is not None:
+                    for k in self.topkpreclist:
+                        self.top_k_rec[k][index] = res['top_k_rec_d'][k]
+                        self.top_k_prec[k][index] = res['top_k_prec_d'][k]
 
         file_prefix = "_".join([self.problem_definition.module, self.problem_definition.presentation,
                                 self.problem_definition.assessment_name, str(self.problem_definition.days_to_cutoff)
