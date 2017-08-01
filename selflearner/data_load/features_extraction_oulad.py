@@ -29,7 +29,7 @@ pd.set_option('expand_frame_repr', False)
 __author__ = 'author@gmail.com'
 
 # DATA_HDF5_PATH = 'data/selflearner.h5'
-DEFAULT_HDF5_PATH = 'data/oulad.h5'
+DEFAULT_HDF5_PATH = 'oulad.h5'
 OULAD_URL = 'https://analyse.kmi.open.ac.uk/open_dataset/download'
 OULAD_MD5_URL = ' https://analyse.kmi.open.ac.uk/open_dataset/downloadCheckSum'
 
@@ -48,7 +48,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name) - %(level
 
 
 class Hdf5Creator:
-    def __init__(self, csv_path=None, hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH)):
+    def __init__(self, csv_path=None, hdf5_path=os.path.join(os.path.dirname(__file__), 'data', DEFAULT_HDF5_PATH)):
         self.csv_path = csv_path
         self.hdf5_path = hdf5_path
         self.hdf5_manager = PytablesHdf5Manager(self.hdf5_path)
@@ -227,7 +227,7 @@ class Hdf5Features:
         :type file_path: String
         :type problem_definition: ProblemDefinition
         """
-        self.file_path = os.path.join(os.path.dirname(__file__), 'data',file_name)
+        self.file_path = os.path.join(os.path.dirname(__file__), 'data', file_name)
         self.problem_definition = problem_definition
         self.access_str = problem_definition.string_representation
         self.storage_manager = PytablesHdf5Manager(self.file_path)
@@ -311,7 +311,7 @@ class FeatureExtractionOulad(FeatureExtraction):
         if hdf5_path is None:
             # if hdf5_filename is None:
             #     hdf5_filename = DEFAULT_HDF5_PATH
-            hdf5_path = os.path.join(os.path.dirname(__file__), hdf5_oulad_file_name)
+            hdf5_path = os.path.join(os.path.dirname(__file__), 'data', hdf5_oulad_file_name)
 
         self.hdf5_path = hdf5_path
         self.data_hdf5_manager = Hdf5Features(problem_definition, file_name=hdf5_tmp_file_name)
