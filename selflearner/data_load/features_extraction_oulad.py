@@ -990,7 +990,7 @@ class FeatureExtractionOulad(FeatureExtraction):
             {'date_back': {'consecutive_days': FeaturesMapping.consecut}})
         df_consecutive_days.columns = ['consecutive_days']
         ret_val = pd.merge(ret_val, df_consecutive_days, left_on='id_student', how='left', right_index=True)
-        ret_val.fillna(0, inplace=0)
+        ret_val.fillna(0, inplace=False)
 
         self.logger.debug("1st: %s, 2nd: %s, 3rd: %s", len(df_last_login), len(df_date_visit_stats_fromvleopen),
                           len(ret_val))
