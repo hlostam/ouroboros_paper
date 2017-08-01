@@ -221,16 +221,16 @@ class Hdf5Features:
     ASSESSMENTS_STR = 'assessments'
     DAYS_STR = 'days'
 
-    def __init__(self, problem_definition, file_path=os.path.join(os.path.dirname(__file__), DATA_HDF5_PATH)):
+    def __init__(self, problem_definition, file_name='selflearner.h5'):
         """
 
         :type file_path: String
         :type problem_definition: ProblemDefinition
         """
-        self.file_path = file_path
+        self.file_path = os.path.join(os.path.dirname(__file__), 'data',file_name)
         self.problem_definition = problem_definition
         self.access_str = problem_definition.string_representation
-        self.storage_manager = PytablesHdf5Manager(file_path)
+        self.storage_manager = PytablesHdf5Manager(self.file_path)
         self.logger = logging.getLogger(__name__)
         self.logger.debug("TMA ACCESS STR: %s", self.access_str)
         self.logger.debug("Storage manager: %s", self.storage_manager)
@@ -303,12 +303,13 @@ class FeatureExtractionOulad(FeatureExtraction):
                  hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH),
                  include_submitted=False,
                  submitted_append_min_date=0,
-                 submitted_append_min_date_rel=None):
+                 submitted_append_min_date_rel=None,
+                 hdf5_tmp_file_name='selflearner.h5'):
         super().__init__(problem_definition, include_submitted=include_submitted,
                          submitted_append_min_date=submitted_append_min_date,
                          submitted_append_min_date_rel=submitted_append_min_date_rel)
         self.hdf5_path = hdf5_path
-        self.data_hdf5_manager = Hdf5Features(problem_definition)
+        self.data_hdf5_manager = Hdf5Features(problem_definition, file_name=hdf5_tmp_file_name)
         self.store_manager = PytablesHdf5Manager(hdf5_path)
         self.logger = logging.getLogger(__name__)
 

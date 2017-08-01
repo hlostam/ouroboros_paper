@@ -4,7 +4,10 @@ import pandas as pd
 import numpy as np
 import warnings
 
+from selflearner.learning.dead_students_classifier import NeverActiveStudentClassifier
+
 from selflearner.data_load.features_extraction_oulad import FeatureExtractionOulad, Hdf5Creator
+from selflearner.learning.NumberDaysNotLoggedClassifier import NumberDaysNotLogedClassifier
 from selflearner.learning.learner import Learner
 from selflearner.plotting.plotting import plot_df
 from selflearner.problem_definition import ProblemDefinition, TrainingType
@@ -66,7 +69,9 @@ class MultiDayExperiment:
                  label_name='submitted', sampler=None, classifiers=None, feature_extractors=None,
                  top_k_prec_list=None, optimise_threshold=True,
                  metrics=None, metrics_k=None,
-                 filter_only_registered=True
+                 filter_only_registered=True,sample_and_retrain_strategy=None,
+                 sample_and_retrain_enabled=False,
+                 hdf5_tmp_file_name='selflearner.h5'
                  ):
         if features is None:
             features = ["demog"]
@@ -94,6 +99,7 @@ class MultiDayExperiment:
                                                                        submitted_append_min_date=submitted_append_min_date,
                                                                        submitted_append_min_date_rel=submitted_append_min_date_rel,
                                                                        generate_all_append_min_dates=generate_all_append_min_dates)
+        self.hdf5_tmp_file_name=hdf5_tmp_file_name
         self.max_days = max_days
         self.max_days_to_predict = max_days_to_predict
         self.min_days = min_days
@@ -107,6 +113,8 @@ class MultiDayExperiment:
         self.optimise_threshold = optimise_threshold
         self.metrics = metrics
         self.metrics_k = metrics_k
+        self.sample_and_retrain_strategy = sample_and_retrain_strategy
+        self.sample_and_retrain_enabled = sample_and_retrain_enabled
         # self.learners = []
         self.feature_extractors = feature_extractors
         self.classifiers = classifiers
@@ -162,7 +170,8 @@ class MultiDayExperiment:
             fe = FeatureExtractionOulad(problem_def,
                                         include_submitted=self.include_submitted,
                                         submitted_append_min_date=problem_def.submitted_append_min_date,
-                                        submitted_append_min_date_rel=problem_def.submitted_append_min_date_rel)
+                                        submitted_append_min_date_rel=problem_def.submitted_append_min_date_rel,
+                                        hdf5_tmp_file_name=self.hdf5_tmp_file_name)
 
             data = fe.extract_features(features=self.features)
             train_data = data["all_train"]
@@ -177,7 +186,10 @@ class MultiDayExperiment:
             if self.classifiers is not None:
                 learner = Learner(train_data, test_data, self.label_name, problem_def, sampler=self.sampler,
                                   classifiers=self.classifiers, feature_extractors=self.feature_extractors,
-                                  topk_prec_list=self.topkpreclist, optimise_threshold=self.optimise_threshold)
+                                  topk_prec_list=self.topkpreclist, optimise_threshold=self.optimise_threshold,
+                                  sample_and_retrain_enabled=self.sample_and_retrain_enabled,
+                                  sample_and_retrain_strategy=self.sample_and_retrain_strategy
+                                  )
                 learner.run()
                 # self.learners.append(learner)
                 learner_results = self.get_classifier_results(learner)
@@ -574,58 +586,105 @@ def main():
     from sklearn.dummy import DummyClassifier
     from sklearn.ensemble import RandomForestClassifier
     classifiers = [
-        # (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5), "RF_2"),
+        # (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=50), "RF_2"),
         (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5), "RF"),
+        (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5, class_weight='balanced'), "RF-B"),
+        (RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_split=2, min_samples_leaf=5,class_weight='balanced_subsample'), "RF-BS"),
         # (DummyClassifier(strategy="constant", constant=1), "Base[NS]")
+        # (NumberDaysNotLogedClassifier(), "Base[NotActive14]"),
+        # (NumberDaysNotLogedClassifier(interpolate=True), "Base[NotActive14Int]"),
+        # (NeverActiveStudentClassifier(),"Base[Never]")
     ]
     features = [
-          "demog",
-           "vle_statistics"
-          , 'vle_statistics_beforestart'
-          , "vle_day_activity_type_flags"
-          , "vle_day_activity_type"
-          , 'vle_day'
-          , 'vle_day_flags'
-          , 'reg_statistics'
+        'demog'
+        , 'vle_statistics'
+        , 'vle_statistics_beforestart'
+        , 'vle_day_activity_type_flags'
+        , 'vle_day_activity_type'
+        , 'vle_day'
+        , 'vle_day_flags'
+        , 'reg_statistics'
     ]
-
-    # modules = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
-    # # modules = ["EEE"]
-    # presentations = ["2014J"]
-
-    modules = ["BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
+    from imblearn.under_sampling import CondensedNearestNeighbour
+    sampler = None
+    # sampler = CondensedNearestNeighbour()
+    modules = ["BBB", "DDD", "EEE", "FFF", "GGG"]
     # modules = ["CCC"]
-    presentations = ["2014J"]
+    presentations = ["2014B", "2014J"]
     module_presentations, module_presentations_previous = reload_module_presentations(modules, presentations)
-    # module_presentations = [("DDD", "2014J", "2014J")]
+
+    domain_samplers = [
+        # 'equal_class_num',
+        # 'remove_class_overlap',
+        # 'remove_until_thr',
+        # 'adjust_by_fpr',
+        'estimate_final_ratio_abs'
+    ]
+    #
+    # for sampler in domain_samplers:
+    #     print(sampler)
+
     md = MultiDayExperiment(
-            max_days='auto',
-            # min_days=0,
-            max_days_to_predict=None,
-            include_submitted=False,
-            module_presentations=
-            # module_presentations,
-            [
-                                  ("AAA", "2013J", "2013J"),
-            #                       ("DDD", "2014J", "2014J")
-                                  ],
-            assessment_name="TMA 1",
-            classifiers=classifiers,
-            # days_for_label_window=0,
-            count_all_days_to_predict=False,
-            count_all_days_for_label_window=False,
-            features=features,
-            filter_only_registered=True,
-            # sampler=SMOTE(),
-            training_type=TrainingType.SELFLEARNER,
-            submitted_append_min_date=-10,
-            # submitted_append_min_date_rel=0,
-            # generate_all_append_min_dates=True
+                training_type=TrainingType.SELFLEARNER,
+                max_days=19,
+                # min_days=1,ll
+                module_presentations=module_presentations,
+                assessment_name="TMA 1",
+                classifiers=classifiers,
+                features=features,
+                sampler=None,
+                sample_and_retrain_enabled=False,
+                max_days_to_predict=None,
+                count_all_days_to_predict=False,
+                submitted_append_min_date=-10,
+                count_all_days_for_label_window=False,
+                include_submitted=False,
+                # days_for_label_window=0,
+                filter_only_registered=False,
+                sample_and_retrain_strategy=sampler,
+                hdf5_tmp_file_name='selflearner_2.h5'
     )
-    # 19-15
     md.perform_experiment()
     print(md.classifiers_names)
-    md.pickle_results(file_name='sample_super_duper_3')
+    # md.pickle_results(file_name='sample_wsame_realestimate_' + sampler)
+    md.pickle_results(file_name='RF_bal_wsame')
+    print('pickled', sampler)
+        
+        #'days_for_label_window': 0,
+        # dump_path = os.path.join(SELF_LEARNER_MODULE_PATH, 'notebooks', 'experiments_fix', 'pickles_results_fix_2',
+        # '_'.join(['wsame_2014_RF', s_name, 'includeSubmitted_allstud']))
+        # lazy_load(dump_path, compute_experiment, kwargs=kwargs, force_recompute=False)
+
+    # md = MultiDayExperiment(
+    #         # max_days='auto',
+    #         max_days=10,
+    #         min_days=7,
+    #         max_days_to_predict=None,
+    #         include_submitted=False,
+    #         module_presentations=
+    #         # module_presentations,
+    #         [
+    #                               # ("AAA", "2013J", "2013J"),
+    #                               ("BBB", "2014B", "2014B"),
+    #             # ("DDD", "2014J", "2013J"),("EEE", "2014J", "2013J"),("FFF", "2014J", "2013J")
+    #         ],
+    #         assessment_name="TMA 1",
+    #         classifiers=classifiers,
+    #         # days_for_label_window=0,
+    #         count_all_days_to_predict=False,
+    #         count_all_days_for_label_window=False,
+    #         features=features,
+    #         filter_only_registered=False,
+    #         sampler=sampler,
+    #         training_type=TrainingType.SELFLEARNER,
+    #         submitted_append_min_date=0,
+    #         # submitted_append_min_date_rel=0,
+    #         # generate_all_append_min_dates=True
+    # )
+    # # 19-15
+    # md.perform_experiment()
+    # print(md.classifiers_names)
+    # md.pickle_results(file_name='debug_test')
 
 if __name__ == "__main__":
     main()
