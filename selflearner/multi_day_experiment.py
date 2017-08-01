@@ -71,7 +71,8 @@ class MultiDayExperiment:
                  metrics=None, metrics_k=None,
                  filter_only_registered=True,sample_and_retrain_strategy=None,
                  sample_and_retrain_enabled=False,
-                 hdf5_tmp_file_name='selflearner.h5'
+                 hdf5_tmp_file_name='selflearner.h5',
+                 hdf5_oulad_file_name = 'oulad.h5'
                  ):
         if features is None:
             features = ["demog"]
@@ -99,7 +100,8 @@ class MultiDayExperiment:
                                                                        submitted_append_min_date=submitted_append_min_date,
                                                                        submitted_append_min_date_rel=submitted_append_min_date_rel,
                                                                        generate_all_append_min_dates=generate_all_append_min_dates)
-        self.hdf5_tmp_file_name=hdf5_tmp_file_name
+        self.hdf5_tmp_file_name = hdf5_tmp_file_name
+        self.hdf5_oulad_file_name = hdf5_oulad_file_name
         self.max_days = max_days
         self.max_days_to_predict = max_days_to_predict
         self.min_days = min_days
@@ -171,7 +173,8 @@ class MultiDayExperiment:
                                         include_submitted=self.include_submitted,
                                         submitted_append_min_date=problem_def.submitted_append_min_date,
                                         submitted_append_min_date_rel=problem_def.submitted_append_min_date_rel,
-                                        hdf5_tmp_file_name=self.hdf5_tmp_file_name)
+                                        hdf5_tmp_file_name=self.hdf5_tmp_file_name,
+                                        hdf5_oulad_file_name=self.hdf5_oulad_file_name)
 
             data = fe.extract_features(features=self.features)
             train_data = data["all_train"]
@@ -642,7 +645,8 @@ def main():
                 # days_for_label_window=0,
                 filter_only_registered=False,
                 sample_and_retrain_strategy=sampler,
-                hdf5_tmp_file_name='selflearner_2.h5'
+                hdf5_tmp_file_name='selflearner_2.h5',
+                hdf5_oulad_file_name='oulad_2.h5'
     )
     md.perform_experiment()
     print(md.classifiers_names)

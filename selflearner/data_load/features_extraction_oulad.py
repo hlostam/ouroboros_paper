@@ -28,7 +28,7 @@ pd.set_option('expand_frame_repr', False)
 
 __author__ = 'author@gmail.com'
 
-DATA_HDF5_PATH = 'data/selflearner.h5'
+# DATA_HDF5_PATH = 'data/selflearner.h5'
 DEFAULT_HDF5_PATH = 'data/oulad.h5'
 OULAD_URL = 'https://analyse.kmi.open.ac.uk/open_dataset/download'
 OULAD_MD5_URL = ' https://analyse.kmi.open.ac.uk/open_dataset/downloadCheckSum'
@@ -300,7 +300,7 @@ class FeatureExtractionOulad(FeatureExtraction):
     data_directory = "data"
 
     def __init__(self, problem_definition: ProblemDefinition,
-                 hdf5_path=os.path.join(os.path.dirname(__file__), DEFAULT_HDF5_PATH),
+                 hdf5_path=None, hdf5_oulad_file_name=DEFAULT_HDF5_PATH,
                  include_submitted=False,
                  submitted_append_min_date=0,
                  submitted_append_min_date_rel=None,
@@ -308,6 +308,11 @@ class FeatureExtractionOulad(FeatureExtraction):
         super().__init__(problem_definition, include_submitted=include_submitted,
                          submitted_append_min_date=submitted_append_min_date,
                          submitted_append_min_date_rel=submitted_append_min_date_rel)
+        if hdf5_path is None:
+            # if hdf5_filename is None:
+            #     hdf5_filename = DEFAULT_HDF5_PATH
+            hdf5_path = os.path.join(os.path.dirname(__file__), hdf5_oulad_file_name)
+
         self.hdf5_path = hdf5_path
         self.data_hdf5_manager = Hdf5Features(problem_definition, file_name=hdf5_tmp_file_name)
         self.store_manager = PytablesHdf5Manager(hdf5_path)
@@ -339,12 +344,12 @@ class FeatureExtractionOulad(FeatureExtraction):
 
     def check_hdf5(self, reload=False):
         if reload:
-            Hdf5Creator().create_hdf5()
+            Hdf5Creator(hdf5_path=self.hdf5_path).create_hdf5()
         elif isfile(self.hdf5_path):
             if not PytablesHdf5Manager(self.hdf5_path).check_exist_dataframes(DS_ARRAY):
-                Hdf5Creator().create_hdf5()
+                Hdf5Creator(hdf5_path=self.hdf5_path).create_hdf5()
         else:
-            Hdf5Creator().create_hdf5()
+            Hdf5Creator(hdf5_path=self.hdf5_path).create_hdf5()
 
     def retrieve_filtered_students(self, dfs, exclude_extended=False):
         df_studinfo = dfs[DS_STUD_INFO]
