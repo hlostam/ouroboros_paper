@@ -17,12 +17,14 @@ from sklearn import linear_model as LR
 from sklearn import preprocessing
 import math
 import concurrent.futures
+from selflearner.module_submission_number import get_expected_submission
 
 from .evaluation_util import top_k_precision
 from .evaluation_util import top_k_recall
 from selflearner.plotting import plotting
 
 import matplotlib.pyplot as plt
+
 
 def auc_using_step(recall, precision):
     return sum([(recall[i] - recall[i + 1]) * precision[i]
@@ -33,6 +35,7 @@ def roam_average_precision(y_true, y_score, sample_weight=None):
     precision, recall, thresholds = precision_recall_curve(
         y_true, y_score, sample_weight=sample_weight)
     return auc_using_step(recall, precision)
+
 
 class Learner:
     def __init__(self, train_data, test_data, label, problem_definition: ProblemDefinition, sampler=None,
@@ -56,6 +59,8 @@ class Learner:
 
         self.optimise_threshold = optimise_threshold
         self.plot_pr_curve = plot_pr_curve
+        self.sample_and_retrain_strategy = sample_and_retrain_strategy
+        self.sample_and_retrain_enabled = sample_and_retrain_enabled
 
         self.problem_definition = problem_definition
         logging.info("Days to cutoff: %s" % problem_definition.days_to_cutoff)
@@ -108,7 +113,7 @@ class Learner:
             ]
         self.classifiers = classifiers
         self.names = [name for clf, name in self.classifiers]
-        self.clf_name_ind =  { n:i for i,n in enumerate(self.names)}
+        self.clf_name_ind = {n: i for i, n in enumerate(self.names)}
 
     def preprocess(self):
         logging.debug("Pre-processing data...")
@@ -199,7 +204,6 @@ class Learner:
         self.classifiers = classifiers
         self.names = [name for clf, name in self.classifiers]
 
-
     def get_metrics_for_thr(self, y_prob, y_actual, thr):
         pred = [1. if v > thr else 0. for v in y_prob]
         f_score = f1_score(y_actual, pred)
@@ -231,10 +235,11 @@ class Learner:
 
         return max_thr, max_fscore, max_prec, max_recall, max_conf_matrix
 
-    def find_threshold_fpr(self, y_prob, y_actual, thresholds, fnr_req):
+    def find_threshold_fnr(self, y_prob, y_actual, thresholds, fnr_req):
         """
-        Finds the best threshold according  to maximal F-Measure.
+        Finds the threshold with .
 
+        :param fnr_req: required FNR
         :param thresholds:
         :param y_prob:
         :param y_actual:
@@ -243,8 +248,8 @@ class Learner:
 
         for t in thresholds:
             fs, pr, rec, cm = self.get_metrics_for_thr(y_prob, y_actual, t)
-            tnr = 1 - rec
-            if tnr < fnr_req:
+            fnr = 1 - rec
+            if fnr >= fnr_req:
                 return t
         logging.debug("not satisfied")
         return t
@@ -268,7 +273,12 @@ class Learner:
     def do_magic(self, x_train, y_train, x_test, y_test, clf, strategy='remove_class_overlap', thresh='auto'):
         logging.debug("[Sample] one step start")
         y_prob_train = clf.predict_proba(x_train)[:, 1]
+        num_majority = len(y_train[y_train > 0])
+        num_minority = len(y_train[y_train < 1])
+        num_both = len(y_train)
 
+        # cond is set as the mask
+        print(strategy)
         if strategy == 'remove_class_overlap':
             y_prob_train_0 = y_prob_train[y_train < 1]
             median_train_0 = np.median(y_prob_train_0)
@@ -278,11 +288,25 @@ class Learner:
                 median_train_0,
                 np.percentile(y_prob_train_0, 75),
                 np.max(y_prob_train_0)))
-            cond = (y_prob_train <= np.percentile(y_prob_train_0, 99)) & (y_train > 0)
+            removal_mask = (y_prob_train <= np.percentile(y_prob_train_0, 99)) & (y_train > 0)
+        elif strategy == 'thr75_remove_class_overlap':
+            y_prob_train_0 = y_prob_train[y_train < 1]
+            median_train_0 = np.median(y_prob_train_0)
+            logging.debug("min:{} 25pct:{} Median:{} 75pct:{} max:{}".format(
+                np.min(y_prob_train_0),
+                np.percentile(y_prob_train_0, 25),
+                median_train_0,
+                np.percentile(y_prob_train_0, 75),
+                np.max(y_prob_train_0)))
+            removal_mask = (y_prob_train <= np.percentile(y_prob_train_0, 75)) & (y_train > 0)
         elif strategy == 'equal_class_num':
+            print('eqClNum')
             # Proportional strategy
+            # Selects the same number as in minority class by making difference in the two
+            # classes number and removes this amount from the training data.
+
             mask_array = np.zeros(len(y_prob_train), dtype=bool)
-            num_to_del = len(y_train[y_train > 0]) - len(y_train[y_train < 1])
+            num_to_del = num_majority - num_minority
             # num_to_del = 1300
             ind_sorted = y_prob_train.argsort()
             ind_to_keep = np.where(y_train > 0)[0]
@@ -291,35 +315,66 @@ class Learner:
 
             # ind = y_prob_train.argsort()[y_train > 0][:num_to_del]
             mask_array[ind] = True
-            cond = mask_array & (y_train > 0)
+            removal_mask = mask_array & (y_train > 0)
         elif strategy == 'remove_until_thr':
             if thresh == 'auto':
                 prec, rec, t = precision_recall_curve(y_train, y_prob_train)
 
-                thresh, _, _, _, _= self.find_best_threshold( y_prob_train, y_train, t)
-                logging.debug("Max thr: {}".format(thresh) )
+                thresh, _, _, _, _ = self.find_best_threshold(y_prob_train, y_train, t)
+                logging.debug("Max thr: {}".format(thresh))
                 thresh = thresh + 0.02
                 # cond = (y_prob_train >= (max_thr - 0.05) ) & (y_prob_train < (max_thr + 0.05)) & (y_train > 0)
-            cond = (y_prob_train <= (thresh)) & (y_train > 0)
-                # cond = (y_prob_train <= thresh & (y_train > 0)
-        elif strategy == 'super_duper':
-            class_ratio = (len(y_train[y_train > 0]) * 1.) / len(y_train[y_train < 1])
-            sqrt_ratio = math.sqrt(class_ratio)
-            # cut until the FPR is sqrt_ratio
+            removal_mask = (y_prob_train <= (thresh)) & (y_train > 0)
+        elif strategy == 'realestimate_final_ratio_abs':
+            final_number_cheated = get_expected_submission(self.problem_definition.module,
+                                                           self.problem_definition.presentation)
+            num_to_del = num_majority - final_number_cheated
+
+            mask_array = np.zeros(len(y_prob_train), dtype=bool)
+            ind_sorted = y_prob_train.argsort()
+            ind_to_keep = np.where(y_train > 0)[0]
+            ind = np.array([x for x in ind_sorted if x in ind_to_keep])
+            ind = ind[:num_to_del]
+            mask_array[ind] = True
+            removal_mask = mask_array & (y_train > 0)
+        elif strategy == 'estimate_final_ratio_abs':
+            estimated_nonsubmission_ratio = 0.2721
+            # estimated_nonsubmission_ratio = 0.3
+            final_number_predicted = estimated_nonsubmission_ratio * len(self.x_train)
+            # final_number_cheated = get_expected_submission(self.problem_definition.module,
+            #                                                self.problem_definition.presentation)
+
+            # print('Expected number of submissions:{} vs real {}'.format(final_number_predicted, final_number_cheated))
+            num_to_del = num_majority - final_number_predicted
+
+            mask_array = np.zeros(len(y_prob_train), dtype=bool)
+            ind_sorted = y_prob_train.argsort()
+            ind_to_keep = np.where(y_train > 0)[0]
+            ind = np.array([x for x in ind_sorted if x in ind_to_keep])
+            ind = ind[:num_to_del]
+            mask_array[ind] = True
+            removal_mask = mask_array & (y_train > 0)
+        elif strategy == 'adjust_by_fpr':
+            class_ratio = num_minority / num_both
+            required_fnr = math.sqrt(class_ratio)
+            # cut until the FNR is sqrt_ratio (FNR instead of FPR as majortiy class here is denoted as 0)
             prec, rec, t = precision_recall_curve(y_train, y_prob_train)
-            thresh = self.find_threshold_fpr(y_prob_train, y_train, t, sqrt_ratio)
+            thresh = self.find_threshold_fnr(y_prob_train, y_train, t, required_fnr)
             logging.debug("Max thr: {}".format(thresh))
-            thresh = thresh + 0.02
-            cond = (y_prob_train <= (thresh)) & (y_train > 0)
+            # thresh = thresh + 0.02
+            removal_mask = (y_prob_train <= thresh) & (y_train > 0)
+        else:
+            logging.error("ERROR")
+            return
+        logging.debug("[bef]Train size: {} 0:{} 1:{}".format(len(y_train), num_minority, num_majority))
 
-
-        logging.debug("[bef]Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
-
-        indices_to_remain = np.where(~cond)
+        indices_to_remain = np.where(~removal_mask)
         x_train = x_train[indices_to_remain]
         y_train = y_train[indices_to_remain]
+        num_majority_after = len(y_train[y_train > 0])
+        num_minority_after = len(y_train[y_train < 1])
         clf.fit(x_train, y_train)
-        logging.debug("Train size: {} 0:{} 1:{}".format(len(y_train), len(y_train[y_train < 1]), len(y_train[y_train > 0])))
+        logging.debug("Train size: {} 0:{} 1:{}".format(len(y_train), num_minority_after, num_majority_after))
 
         y_prob_train = clf.predict_proba(x_train)[:, 1]
         # plt.hist(y_prob_train, bins='auto')
@@ -342,6 +397,8 @@ class Learner:
         p = clf.predict_proba(self.x_test)
         x_train = np.array(self.x_train)
         y_train = np.array(self.y_train)
+        x_train_best = x_train
+        y_train_best = y_train
 
         try:
             y_prob = p[:, 1]
@@ -356,8 +413,8 @@ class Learner:
             len_train = np.inf
 
             best_auc = 0
-            x_train_best = x_train
-            y_train_best = y_train
+            max_iter = 1
+
             for _ in range(max_iter):
                 # no change -> stop for_loop
                 if len_train_new == len_train:
@@ -365,9 +422,10 @@ class Learner:
                     break
                 len_train = len_train_new
                 x_train, y_train, clf, auc_tr = self.do_magic(x_train, y_train, self.x_test, self.y_test,
-                                                clf,
-                                                strategy=self.sample_and_retrain_strategy)
+                                                              clf,
+                                                              strategy=self.sample_and_retrain_strategy)
                 if auc_tr > best_auc:
+                    logging.debug("best updated: {} > {}".format(auc_tr, best_auc))
                     x_train_best = x_train
                     y_train_best = y_train
                     best_auc = auc_tr
@@ -422,11 +480,11 @@ class Learner:
         x_train = self.x_train
         y_train = self.y_train
         if hasattr(clf, 'predict_proba'):
-            self.sample_and_retrain_strategy = 'equal_class_num'
+            # self.sample_and_retrain_strategy = 'equal_class_num'
             # self.sample_and_retrain_strategy = 'remove_class_overlap'
             # self.sample_and_retrain_strategy = 'remove_until_thr'
-            # self.sample_and_retrain_strategy = 'super_duper'
-
+            # self.sample_and_retrain_strategy = 'adjust_by_fpr'
+            # self.sample_and_retrain_strategy = 'estimate_final_ratio_abs'
             # self.sample_and_retrain_enabled = True
             if self.sample_and_retrain_enabled:
                 logging.info("Sampling strategy:{}".format(self.sample_and_retrain_strategy))
@@ -556,7 +614,8 @@ class Learner:
         self.handle_sampling()
 
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            for (clf, clf_name), res in zip(self.classifiers, executor.map(self.train_one_classifier, self.classifiers)):
+            for (clf, clf_name), res in zip(self.classifiers,
+                                            executor.map(self.train_one_classifier, self.classifiers)):
                 index = self.clf_name_ind[clf_name]
                 logging.debug('Clf:{} Index:{}'.format(clf_name, index))
                 pr_auc_list[clf_name] = res['pr_auc_list']
