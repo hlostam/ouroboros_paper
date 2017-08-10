@@ -337,14 +337,33 @@ class Learner:
             ind = ind[:num_to_del]
             mask_array[ind] = True
             removal_mask = mask_array & (y_train > 0)
+        elif strategy == 'estimate_final_ratio_abs_22':
+            estimated_nonsubmission_ratio = 0.2259
+            final_number_predicted = estimated_nonsubmission_ratio * len(self.x_train)
+            num_to_del = num_majority - final_number_predicted
+
+            mask_array = np.zeros(len(y_prob_train), dtype=bool)
+            ind_sorted = y_prob_train.argsort()
+            ind_to_keep = np.where(y_train > 0)[0]
+            ind = np.array([x for x in ind_sorted if x in ind_to_keep])
+            ind = ind[:num_to_del]
+            mask_array[ind] = True
+            removal_mask = mask_array & (y_train > 0)
+        elif strategy == 'estimate_final_ratio_abs_29':
+            estimated_nonsubmission_ratio = 0.2947
+            final_number_predicted = estimated_nonsubmission_ratio * len(self.x_train)
+            num_to_del = num_majority - final_number_predicted
+
+            mask_array = np.zeros(len(y_prob_train), dtype=bool)
+            ind_sorted = y_prob_train.argsort()
+            ind_to_keep = np.where(y_train > 0)[0]
+            ind = np.array([x for x in ind_sorted if x in ind_to_keep])
+            ind = ind[:num_to_del]
+            mask_array[ind] = True
+            removal_mask = mask_array & (y_train > 0)
         elif strategy == 'estimate_final_ratio_abs':
             estimated_nonsubmission_ratio = 0.2721
-            # estimated_nonsubmission_ratio = 0.3
             final_number_predicted = estimated_nonsubmission_ratio * len(self.x_train)
-            # final_number_cheated = get_expected_submission(self.problem_definition.module,
-            #                                                self.problem_definition.presentation)
-
-            # print('Expected number of submissions:{} vs real {}'.format(final_number_predicted, final_number_cheated))
             num_to_del = num_majority - final_number_predicted
 
             mask_array = np.zeros(len(y_prob_train), dtype=bool)
